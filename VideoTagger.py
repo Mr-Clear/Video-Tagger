@@ -1,14 +1,14 @@
-#!/usr/bon/env python
+#!/usr/bin/env python
 
 import humanize
 import sqlite3
 
 from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractItemModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView
 
 from dataclasses import dataclass, field
-from typing import Iterable, Set, List
+from typing import Iterable, Set, List, Dict
 import os
 import subprocess
 from PySide6.QtWidgets import QFileDialog
@@ -123,6 +123,11 @@ class Database:
         tags = {tag_row[0] for tag_row in self.cursor.fetchall()}
         return self.File(file_id, path, size, datetime.fromisoformat(date_modified), duration, rating, tags)
 
+    def find_file(self, path: str) -> File|None:
+        self.cursor.execute('SELECT id FROM files WHERE path = ?', (path,))
+        file_id = self.cursor.fetchone()
+        return self.get_file(file_id[0]) if file_id is not None else None
+
     def get_files(self) -> List[File]:
         self.cursor.execute('SELECT id FROM files ORDER BY path')
         file_ids = [row[0] for row in self.cursor.fetchall()]
@@ -144,9 +149,9 @@ class Database:
         self.conn.commit()
         return file_id
     
-    def get_tags(self) -> list[str]:
-        self.cursor.execute('SELECT name FROM tags ORDER BY name')
-        return [row[0] for row in self.cursor.fetchall()]
+    def get_tags(self) -> Dict[str, int]:
+        self.cursor.execute('SELECT name, COUNT(file_has_tag.tag_id) FROM tags LEFT JOIN file_has_tag ON tags.id = file_has_tag.tag_id GROUP BY tags.id')
+        return {row[0]: row[1] for row in self.cursor.fetchall()}
     
     def set_tag(self, file_id: int, tag: str):
         self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
@@ -222,11 +227,10 @@ class MainWindow(QMainWindow):
         self.file_list = QTableView()
         self.file_list.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.file_list.setSelectionMode(QTableView.SelectionMode.SingleSelection)
-        self.file_list.horizontalHeader().setStretchLastSection = True
         self.file_list.verticalHeader().hide()
-        self.file_list.show_grid = False
-        self.file_list.sections_clickable = True
-        self.file_list.sorting_enabled = True
+        self.file_list.setShowGrid(False)
+        self.file_list.setSortingEnabled(True)
+        self.file_list.horizontalHeader().setSectionsClickable(True)
         self.left_layout.addWidget(self.file_list)
         self.load_files()
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
@@ -239,7 +243,16 @@ class MainWindow(QMainWindow):
         self.right_layout = QVBoxLayout()
         self.main_layout.addLayout(self.right_layout)
 
+        self.file_path_text = QLineEdit()
+        self.file_path_text.setReadOnly(True)
+        self.right_layout.addWidget(self.file_path_text)
+
         self.tag_list = QTableView()
+        self.tag_list.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.tag_list.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.tag_list.setShowGrid(False)
+        self.tag_list.setSortingEnabled(True)
+        self.tag_list.horizontalHeader().setSectionsClickable(True)
         self.right_layout.addWidget(self.tag_list)
         self.load_tags()
 
@@ -284,24 +297,44 @@ class MainWindow(QMainWindow):
         proxy_model = FileSortFilterProxyModel()
         proxy_model.setSourceModel(self.file_list_model)
         self.file_list.setModel(proxy_model)
+        
+        self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
 
     def load_tags(self):
         tags = self.database.get_tags()
-        model = QStandardItemModel()
-        for tag in tags:
-            item = QStandardItem(tag)
-            model.append_row(item)
-        self.tag_list.setModel(model)
+        self.tag_list_model = TagListModel(tags)
+        proxy_model = QSortFilterProxyModel()
+        proxy_model.setSourceModel(self.tag_list_model)
+        self.tag_list.setModel(proxy_model)
+
+        self.tag_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tag_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tag_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tag_list.sortByColumn(1, Qt.SortOrder.AscendingOrder)
+
+        self.tag_list_model.tag_set.connect(self.database.set_tag)
+        self.tag_list_model.tag_removed.connect(self.database.remove_tag)
+
 
     def on_file_selected(self, selected, deselected):
         indexes = selected.indexes()
         if indexes:
-            self.selected_file = self.file_list_model.files[indexes[0].row()]
-            self.vlc.play_video(self.selected_file.path)
+            self.selected_file = indexes[0].data(Qt.UserRole)
+            self.file_path_text.setText(self.selected_file.path)
+            self.tag_list_model.current_file = self.selected_file
             self.rating_widget.rating = self.selected_file.rating
+            self.vlc.play_video(self.selected_file.path)
         else:
             self.selected_file = None
+            self.file_path_text.clear()
+            self.tag_list_model.current_file = None
             self.rating_widget.rating = None
+            self.vlc.stop_video()
 
     def update_vlc_status(self):
         self.vlc.update_status()
@@ -445,18 +478,106 @@ class StarRatingDelegate(QStyledItemDelegate):
         file: Database.File = index.data(Qt.UserRole)
         star_rating_widget = StarRatingWidget(10, file.rating, self.parent())
         star_rating_widget.setGeometry(option.rect)
-        star_rating_widget.render(painter, self.parent().mapTo(self.parent().window(), option.rect.topLeft()) + QPoint(0, 26))
+        star_rating_widget.render(painter, self.parent().mapTo(self.parent().window(), option.rect.topLeft()) + QPoint(1, 27))
         #star_rating_widget.render(painter, option.rect.topLeft())
+
+    def sizeHint(self, option, index):
+        return QSize(100, 20)
+
 
 class FileSortFilterProxyModel(QSortFilterProxyModel):
     def lessThan(self, left, right):
-        if self.sort_column() != 1:  # Not size column
-            return super().less_than(left, right)
+        if self.sortColumn() != 1:  # Not size column
+            return super().lessThan(left, right)
 
-        left_file = self.source_model.files[left.row()]
-        right_file = self.source_model.files[right.row()]
+        left_file = self.sourceModel().files[left.row()]
+        right_file = self.sourceModel().files[right.row()]
     
         return left_file.size < right_file.size
+
+
+class TagListModel(QAbstractItemModel):
+    tag_set = Signal(int, str)
+    tag_removed = Signal(int, str)
+
+    def __init__(self, tags: Dict[str, int]):
+        super().__init__()
+        self.tags = tags
+        self.tag_names = list(tags.keys())
+        self.checked_tags = set()
+        self._current_file: Database.File | None = None
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self.tags)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 3  # Checkbox, Tag Name, Tag Count
+
+    def data(self, index, role):
+        if not index.isValid():
+            return None
+        tag_name = self.tag_names[index.row()]
+        if role == Qt.DisplayRole:
+            if index.column() == 1:
+                return tag_name
+            elif index.column() == 2:
+                return str(self.tags[tag_name])
+        elif role == Qt.CheckStateRole and index.column() == 0:
+            return Qt.Checked if tag_name in self.checked_tags else Qt.Unchecked
+        return None
+
+    def setData(self, index, value, role):
+        if role == Qt.CheckStateRole and index.column() == 0:
+            tag_name = self.tag_names[index.row()]
+            if value == Qt.CheckState.Checked.value:
+                self.checked_tags.add(tag_name)
+                self.tags[tag_name] += 1
+                self.tag_set.emit(self.current_file.id, tag_name)
+            else:
+                self.checked_tags.remove(tag_name)
+                self.tags[tag_name] -= 1
+                self.tag_removed.emit(self.current_file.id, tag_name)
+            self.dataChanged.emit(index, index.sibling(index.row(), self.columnCount() - 1))
+            return True
+        return False
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.NoItemFlags
+        if index.column() == 0:
+            return Qt.ItemIsEnabled | Qt.ItemIsUserCheckable
+        return Qt.ItemIsEnabled
+
+    def headerData(self, section, orientation, role):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            if section == 0:
+                return "☑"
+            elif section == 1:
+                return "Name"
+            elif section == 2:
+                return "∑"
+        return None
+
+    def index(self, row, column, parent=QModelIndex()):
+        if self.hasIndex(row, column, parent):
+            return self.createIndex(row, column)
+        return QModelIndex()
+
+    def parent(self, index):
+        return QModelIndex()
+
+    @property
+    def current_file(self):
+        return self._current_file
+
+    @current_file.setter
+    def current_file(self, file: Database.File|None):
+        if file is None:
+            self.checked_tags.clear()
+        self._current_file = file
+        self.checked_tags = file.tags
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
 
 class AddFilesDialog(QDialog):
     default_filter = QDir.Dirs | QDir.NoDotAndDotDot
@@ -597,7 +718,7 @@ def resolve_symlink(path):
 def main():
     app = QApplication([])
     main_window = MainWindow()
-    main_window.show()
+    main_window.showMaximized()
     QApplication.exec()
 
 if __name__ == '__main__':
