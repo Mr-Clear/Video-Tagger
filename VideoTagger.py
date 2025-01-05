@@ -3,9 +3,9 @@
 import humanize
 import sqlite3
 
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractItemModel, QModelIndex, QEvent, QPoint
-from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractItemModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel
 
 from dataclasses import dataclass, field
 from typing import Iterable, Set, List
@@ -73,7 +73,7 @@ class Database:
         id: int
         path: str
         size: int
-        date_created: datetime
+        date_modified: datetime
         duration: float | None = None
         rating: int | None = None
         tags: set[str] = field(default_factory=set)
@@ -91,7 +91,7 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
             size INTEGER NOT NULL,
-            date_created TIMESTAMP NOT NULL,
+            date_modified TIMESTAMP NOT NULL,
             duration FLOAT,
             rating INTEGER DEFAULT NULL
             )''')
@@ -107,16 +107,21 @@ class Database:
         self.cursor.execute('''CREATE INDEX IF NOT EXISTS idx_file_id ON file_has_tag(file_id)''')
         self.cursor.execute('''CREATE INDEX IF NOT EXISTS idx_tag_id ON file_has_tag(tag_id)''')
         self.conn.commit()
+
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT)''')
     
     def close(self):
         self.conn.close()
     
     def get_file(self, file_id: int) -> File:
-        self.cursor.execute('SELECT path, size, date_created, duration, rating FROM files WHERE id = ?', (file_id,))
-        path, size, date_created, duration, rating = self.cursor.fetchone()
+        self.cursor.execute('SELECT path, size, date_modified, duration, rating FROM files WHERE id = ?', (file_id,))
+        path, size, date_modified, duration, rating = self.cursor.fetchone()
         self.cursor.execute('SELECT name FROM tags INNER JOIN file_has_tag ON tags.id = file_has_tag.tag_id WHERE file_has_tag.file_id = ?', (file_id,))
         tags = {tag_row[0] for tag_row in self.cursor.fetchall()}
-        return self.File(file_id, path, size, datetime.fromisoformat(date_created), duration, rating, tags)
+        return self.File(file_id, path, size, datetime.fromisoformat(date_modified), duration, rating, tags)
 
     def get_files(self) -> List[File]:
         self.cursor.execute('SELECT id FROM files ORDER BY path')
@@ -128,10 +133,16 @@ class Database:
         file_ids = [row[0] for row in self.cursor.fetchall()]
         return [self.get_file(file_id) for file_id in file_ids]
 
-    def add_file(self, path: str, size: int, date_created: datetime, duration: float | None = None, rating: int | None = None) -> int:
-        self.cursor.execute('INSERT INTO files (path, size, date_created, duration, rating) VALUES (?, ?, ?, ?, ?)', (path, size, date_created, duration, rating))
+    def add_file(self, file: File) -> int:
+        self.cursor.execute('SELECT id FROM files WHERE path = ?', (file.path,))
+        if self.cursor.fetchone() is not None:
+            return -1  # File already exists
+        self.cursor.execute('INSERT INTO files (path, size, date_modified, duration, rating) VALUES (?, ?, ?, ?, ?)', (file.path, file.size, file.date_modified.isoformat(), file.duration, file.rating))
+        file_id = self.cursor.lastrowid
+        for tag in file.tags:
+            self.set_tag(file_id, tag)
         self.conn.commit()
-        return self.cursor.lastrowid
+        return file_id
     
     def get_tags(self) -> list[str]:
         self.cursor.execute('SELECT name FROM tags ORDER BY name')
@@ -164,6 +175,19 @@ class Database:
     def remove_file(self, file_id: int):
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ?', (file_id,))
         self.cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
+        self.conn.commit()
+
+    def get_setting(self, key: str, default: str|None = None) -> str|None:
+        self.cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
+        result = self.cursor.fetchone()
+        return result[0] if result is not None else default
+    
+    def set_setting(self, key: str, value: str):
+        self.cursor.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
+        self.conn.commit()
+
+    def remove_setting(self, key: str):
+        self.cursor.execute('DELETE FROM settings WHERE key = ?', (key,))
         self.conn.commit()
 
 
@@ -208,9 +232,9 @@ class MainWindow(QMainWindow):
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
         self.file_list.setItemDelegateForColumn(1, StarRatingDelegate(self.file_list))
 
-        self.scan_button = QPushButton("Scan Directory")
-        self.scan_button.clicked.connect(self.scan_directory)
-        self.left_layout.addWidget(self.scan_button)
+        self.add_files_button = QPushButton("Add Files")
+        self.add_files_button.clicked.connect(self.show_add_files_dialog)
+        self.left_layout.addWidget(self.add_files_button)
 
         self.right_layout = QVBoxLayout()
         self.main_layout.addLayout(self.right_layout)
@@ -231,10 +255,18 @@ class MainWindow(QMainWindow):
         self.rating_widget.rating_changed.connect(self.set_rating)
         self.right_layout.addWidget(self.rating_widget)
 
-    def scan_directory(self):
-        directory = QFileDialog.get_existing_directory(self, "Select Directory")
-        if directory:
-            self.scan_files(directory)
+    def show_add_files_dialog(self):
+        dialog = AddFilesDialog(self.database, self)
+        dialog.exec()
+        if dialog.result() == QDialog.Accepted:
+            for file_path in dialog.found_files:
+                try:
+                    size = os.path.getsize(file_path)
+                    date_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    self.database.add_file(Database.File(None, file_path, size, date_modified))
+                except Exception as e:
+                    print(e)
+            self.load_files()
     
     def add_tag(self):
         if self.selected_file is not None:
@@ -242,17 +274,6 @@ class MainWindow(QMainWindow):
             self.database.set_tag(self.selected_file.id, tag)
             self.add_tag_edit.clear()
     
-        
-    def scan_files(self, directory):
-        for root, _, files in os.walk(directory):
-            for file in files:
-                if file.endswith(('.mp4', '.avi', '.mkv')):
-                    file_path = os.path.join(root, file)
-                    size = os.path.getsize(file_path)
-                    date_created = datetime.fromtimestamp(os.path.getctime(file_path))
-                    self.database.add_file(file_path, size, date_created, None)
-        self.load_files()
-
     def get_video_duration(self, file_path):
         result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return float(result.stdout)
@@ -305,7 +326,7 @@ class FileListModel(QAbstractItemModel):
     def __init__(self, files: List[Database.File]):
         super().__init__()
         self.files = files
-        self.horizontal_header_labels = ['Name', 'Rating', 'Size', 'Created', 'Duration']
+        self.horizontal_header_labels = ['Name', 'Rating', 'Size', 'Modified', 'Duration']
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.files)
@@ -325,7 +346,7 @@ class FileListModel(QAbstractItemModel):
             elif index.column() == 2:
                 return humanize.naturalsize(file.size)
             elif index.column() == 3:
-                return file.date_created.strftime('%Y-%m-%d %H:%M:%S')
+                return file.date_modified.strftime('%Y-%m-%d %H:%M:%S')
             elif index.column() == 4:
                 return str(file.duration)
         elif role == Qt.UserRole:
@@ -437,6 +458,141 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
     
         return left_file.size < right_file.size
 
+class AddFilesDialog(QDialog):
+    default_filter = QDir.Dirs | QDir.NoDotAndDotDot
+
+    def __init__(self, database: Database, parent=None):
+        super().__init__(parent)
+        self.database = database
+        self.found_files = set()
+
+        self.setWindowTitle("Add Files")
+        self.setGeometry(100, 100, 800, 600)
+
+        self.init_ui()
+
+    def init_ui(self):
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+
+        # File type filter
+        self.file_filter = QLineEdit(self.database.get_setting('scan_file_filter', '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.webp;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'))
+        self.file_filter.textChanged.connect(lambda text: self.database.set_setting('scan_file_filter', text))
+        self.layout.addWidget(self.file_filter)
+
+        self.file_system_view = QTreeView()
+        self.file_system_view_model = QFileSystemModel()
+        self.file_system_view.setModel(self.file_system_view_model)
+        self.file_system_view_model.setRootPath(QDir.rootPath())
+        self.file_system_view_model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot | QDir.Hidden)
+        for i in range(1, 4):
+            self.file_system_view.hideColumn(i)
+        last_used_folder = self.database.get_setting('last_scanned_folder', QDir.homePath())
+        last_used_index = self.file_system_view_model.index(last_used_folder)
+        self.file_system_view.scrollTo(last_used_index)
+        self.file_system_view.selectionModel().setCurrentIndex(last_used_index, QItemSelectionModel.SelectionFlag.Select)
+        self.file_system_view.setExpanded(last_used_index, True)
+        self.file_system_view.setContextMenuPolicy(Qt.ActionsContextMenu)
+        toggle_hidden_action = QAction("Toggle Hidden Files", self)
+        toggle_hidden_action.setShortcut("Ctrl+H")
+        toggle_hidden_action.triggered.connect(self.toggle_hidden_files)
+        self.addAction(toggle_hidden_action)
+        self.show_hidden_files(self.database.get_setting('show_hidden_files', 'false') == 'true')
+        self.layout.addWidget(self.file_system_view)
+
+        self.bottom_layout = QHBoxLayout()
+        self.layout.addLayout(self.bottom_layout)
+
+        self.scan_directory_button = QPushButton("Scan Directory")
+        self.scan_directory_button.clicked.connect(self.scan_directory)
+        self.bottom_layout.addWidget(self.scan_directory_button)
+
+        self.abort_scan_button = QPushButton("Abort Scan")
+        self.abort_scan_button.setEnabled(False)
+        self.abort_scan_button.clicked.connect(self.abort_scan)
+        self.bottom_layout.addWidget(self.abort_scan_button)
+
+        self.status_label = QLabel()
+        self.bottom_layout.addWidget(self.status_label)
+
+        self.accept_button = QPushButton("Accept")
+        self.accept_button.clicked.connect(self.accept)
+        self.bottom_layout.addWidget(self.accept_button)
+
+    def toggle_hidden_files(self):
+        show = not self.file_system_view_model.filter() & QDir.Hidden
+        self.show_hidden_files(show)
+        self.database.set_setting('show_hidden_files', 'true' if show else 'false')
+    
+    def show_hidden_files(self, show: bool):
+        if show:
+            self.file_system_view_model.setFilter(AddFilesDialog.default_filter | QDir.Hidden)
+        else:
+            self.file_system_view_model.setFilter(AddFilesDialog.default_filter)
+
+    def scan_directory(self):
+        class ScanWorker(QObject):
+            file_found = Signal(str)
+            finished = Signal()
+            def __init__(self, directory, file_filter):
+                super().__init__()
+                self.directory = directory
+                self.file_filter = file_filter
+                self.abort_scan = False
+
+            def scan(self):
+                for root, _, files in os.walk(self.directory):
+                    for file in files:
+                        if self.abort_scan:
+                            return
+                        if file.endswith(tuple(self.file_filter.split(';'))):
+                            try:
+                                file_path = resolve_symlink(os.path.join(root, file))
+                                self.file_found.emit(file_path)
+                            except Exception as e:
+                                print(e)
+                return
+
+            def run(self):
+                self.scan()
+                self.finished.emit()
+        
+        scan_root = self.file_system_view_model.filePath(self.file_system_view.currentIndex())
+        self.database.set_setting('last_scanned_folder', scan_root)
+        self.scan_directory_button.setEnabled(False)
+        self.abort_scan_button.setEnabled(True)
+        self.accept_button.setEnabled(False)
+        self.status_label.setText("Scanning directory...")
+        self.scan_worker = ScanWorker(scan_root, self.file_filter.text())
+        self.scan_worker.file_found.connect(self.on_file_found)
+        self.scan_worker.finished.connect(self.on_finished)
+        self.scan_worker_thread = QThread()
+        self.scan_worker.moveToThread(self.scan_worker_thread)
+        self.scan_worker_thread.started.connect(self.scan_worker.run)
+        self.scan_worker_thread.start()
+    
+    def on_file_found(self, file_path):
+        self.found_files.add(file_path)
+        self.status_label.setText(f"Found {len(self.found_files)} files")
+    
+    def on_finished(self):
+        self.status_label.setText(f"{len(self.found_files)} files found")
+        self.scan_directory_button.setEnabled(True)
+        self.abort_scan_button.setEnabled(False)
+        self.accept_button.setEnabled(True)
+
+    def abort_scan(self):
+        self.scan_worker_thread.quit()
+        self.scan_worker_thread.wait()
+        self.status_label.setText("Scan aborted")
+        
+
+def resolve_symlink(path):
+    if os.path.islink(path):
+        return resolve_symlink(os.path.realpath(path))
+    return path
+        
 
 def main():
     app = QApplication([])
