@@ -250,7 +250,6 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.file_list)
         self.load_files()
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
-        self.file_list.setItemDelegateForColumn(1, StarRatingDelegate(self.file_list))
 
         self.file_list.setContextMenuPolicy(Qt.ActionsContextMenu)
         self.file_list_context_menu = QMenu(self)
@@ -403,7 +402,7 @@ class MainWindow(QMainWindow):
             self.on_current_file_modified()
 
     def on_current_file_modified(self):
-        index = self.file_list.selectionModel().selection().indexes()[0]
+        index = self.selected_file_index()
         if index and index.isValid():
             self.file_list_model.dataChanged.emit(self.file_list_model.index(index.row(), 0), self.file_list_model.index(index.row(), self.file_list_model.columnCount() - 1))
 
@@ -418,6 +417,9 @@ class MainWindow(QMainWindow):
     def close_event(self, event):
         self.vlc.close()
         event.accept()
+
+    def selected_file_index(self):
+        return self.file_list_model.index(self.file_list_model.files.index(self.selected_file), 0)
 
 
 class FileListModel(QAbstractTableModel):
@@ -440,7 +442,10 @@ class FileListModel(QAbstractTableModel):
             if index.column() == 0:
                 return os.path.basename(file.path).split('.')[0]
             if index.column() == 1:
-                return None if file.rating is None else str(file.rating)
+                if file.rating:
+                    return '★' * file.rating + '☆' * (5 - file.rating)
+                else:
+                    return None
             elif index.column() == 2:
                 return humanize.naturalsize(file.size)
             elif index.column() == 3:
