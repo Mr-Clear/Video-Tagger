@@ -3,7 +3,7 @@
 import humanize
 import sqlite3
 
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractItemModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView
 
@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         self.add_tag_button.clicked.connect(self.add_tag)
         self.add_tag_layout.addWidget(self.add_tag_button)
 
-        self.rating_widget = StarRatingWidget(20, None, self)
+        self.rating_widget = StarRatingWidget(20, self)
         self.rating_widget.rating_changed.connect(self.set_rating)
         self.right_layout.addWidget(self.rating_widget)
 
@@ -355,7 +355,7 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
-class FileListModel(QAbstractItemModel):
+class FileListModel(QAbstractTableModel):
     def __init__(self, files: List[Database.File]):
         super().__init__()
         self.files = files
@@ -367,7 +367,7 @@ class FileListModel(QAbstractItemModel):
     def columnCount(self, parent=QModelIndex()):
         return len(self.horizontal_header_labels)
 
-    def data(self, index, role):
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         file = self.files[index.row()]
@@ -386,25 +386,17 @@ class FileListModel(QAbstractItemModel):
             return file
         return None
 
-    def headerData(self, section, orientation, role):
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             return self.horizontal_header_labels[section]
         return None
 
-    def index(self, row, column, parent=QModelIndex()):
-        if self.hasIndex(row, column, parent):
-            return self.createIndex(row, column)
-        return QModelIndex()
-
-    def parent(self, index):
-        return QModelIndex()
-
 class StarRatingWidget(QWidget):
     rating_changed = Signal(int)
     
-    def __init__(self, font_size, rating: int|None, parent=None):
+    def __init__(self, font_size, parent=None):
         super().__init__(parent)
-        self._rating = rating
+        self._rating: int|None = None
         self.hovered_star: int|None = None
         self.stars: List[QLabel] = []
         self.font_size: int = font_size
@@ -473,13 +465,17 @@ class StarRatingWidget(QWidget):
 class StarRatingDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.star_rating_widget = StarRatingWidget(10, self.parent())
         
     def paint(self, painter, option, index):
         file: Database.File = index.data(Qt.UserRole)
-        star_rating_widget = StarRatingWidget(10, file.rating, self.parent())
-        star_rating_widget.setGeometry(option.rect)
-        star_rating_widget.render(painter, self.parent().mapTo(self.parent().window(), option.rect.topLeft()) + QPoint(1, 27))
-        #star_rating_widget.render(painter, option.rect.topLeft())
+        self.star_rating_widget.rating = file.rating
+        self.star_rating_widget.setGeometry(option.rect)
+        self.star_rating_widget.resize(option.rect.size())
+        painter.save()
+        painter.translate(option.rect.topLeft())
+        self.star_rating_widget.render(painter, QPoint(0, 0))
+        painter.restore()
 
     def sizeHint(self, option, index):
         return QSize(100, 20)
@@ -496,7 +492,7 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         return left_file.size < right_file.size
 
 
-class TagListModel(QAbstractItemModel):
+class TagListModel(QAbstractTableModel):
     tag_set = Signal(int, str)
     tag_removed = Signal(int, str)
 
@@ -513,7 +509,7 @@ class TagListModel(QAbstractItemModel):
     def columnCount(self, parent=QModelIndex()):
         return 3  # Checkbox, Tag Name, Tag Count
 
-    def data(self, index, role):
+    def data(self, index, role = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         tag_name = self.tag_names[index.row()]
@@ -557,14 +553,6 @@ class TagListModel(QAbstractItemModel):
             elif section == 2:
                 return "∑"
         return None
-
-    def index(self, row, column, parent=QModelIndex()):
-        if self.hasIndex(row, column, parent):
-            return self.createIndex(row, column)
-        return QModelIndex()
-
-    def parent(self, index):
-        return QModelIndex()
 
     @property
     def current_file(self):
