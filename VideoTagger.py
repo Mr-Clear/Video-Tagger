@@ -5,7 +5,7 @@ import sqlite3
 
 from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
 from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView, QMenu
 
 from dataclasses import dataclass, field
 from typing import Iterable, Set, List, Dict
@@ -252,6 +252,21 @@ class MainWindow(QMainWindow):
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
         self.file_list.setItemDelegateForColumn(1, StarRatingDelegate(self.file_list))
 
+        self.file_list.setContextMenuPolicy(Qt.ActionsContextMenu)
+        self.file_list_context_menu = QMenu(self)
+
+        for i, header in list(enumerate(self.file_list_model.horizontal_header_labels))[1:]:
+            action = QAction(header, self.file_list)
+            column_visible = self.database.get_setting(f'column_visibility_{header}', str(True)) == 'True'
+            action.setCheckable(True)
+            action.setChecked(column_visible)
+            self.file_list.setColumnHidden(i, not column_visible)
+            action.toggled.connect(lambda checked, col=i: self.toggle_column_visibility(col, checked))
+            self.file_list_context_menu.addAction(action)
+
+        self.file_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
+
         self.add_files_button = QPushButton("Add Files")
         self.add_files_button.clicked.connect(self.show_add_files_dialog)
         self.left_layout.addWidget(self.add_files_button)
@@ -344,6 +359,24 @@ class MainWindow(QMainWindow):
         self.tag_list_model.tag_set.connect(self.database.set_tag)
         self.tag_list_model.tag_removed.connect(self.database.remove_tag)
 
+    def show_tag_list_context_menu(self, pos):
+        index = self.tag_list.indexAt(pos)
+        if not index.isValid():
+            return
+        tag_name = index.sibling(index.row(), 1).data()
+        menu = QMenu(self)
+        delete_action = QAction("Delete Tag", self)
+        delete_action.triggered.connect(lambda: self.delete_tag(tag_name))
+        menu.addAction(delete_action)
+        menu.exec(self.tag_list.viewport().mapToGlobal(pos))
+
+    def delete_tag(self, tag_name: str):
+        self.database.delete_tag(tag_name)
+        index = self.tag_list_model.index(self.tag_list_model.tag_names.index(tag_name), 0)
+        self.tag_list_model.beginRemoveRows(QModelIndex(), index.row(), index.row())
+        self.tag_list_model.tag_names.remove(tag_name)
+        self.tag_list_model.tags.pop(tag_name)
+        self.tag_list_model.endRemoveRows()
 
     def on_file_selected(self, selected, deselected):
         indexes = selected.indexes()
@@ -373,6 +406,14 @@ class MainWindow(QMainWindow):
         index = self.file_list.selectionModel().selection().indexes()[0]
         if index and index.isValid():
             self.file_list_model.dataChanged.emit(self.file_list_model.index(index.row(), 0), self.file_list_model.index(index.row(), self.file_list_model.columnCount() - 1))
+
+    def show_file_list_context_menu(self, pos):
+        self.file_list_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
+
+    def toggle_column_visibility(self, column, visible):
+        self.file_list.setColumnHidden(column, not visible)
+        for action in self.file_list_context_menu.actions():
+            self.database.set_setting(f'column_visibility_{action.text()}', str(action.isChecked()))
 
     def close_event(self, event):
         self.vlc.close()
@@ -644,7 +685,7 @@ class AddFilesDialog(QDialog):
         toggle_hidden_action.setShortcut("Ctrl+H")
         toggle_hidden_action.triggered.connect(self.toggle_hidden_files)
         self.addAction(toggle_hidden_action)
-        self.show_hidden_files(bool(self.database.get_setting('show_hidden_files', str(False))))
+        self.show_hidden_files(self.database.get_setting('show_hidden_files', str(False)) == 'True')
         self.layout.addWidget(self.file_system_view)
 
         self.bottom_layout = QHBoxLayout()
