@@ -152,6 +152,10 @@ class Database:
     def get_tags(self) -> Dict[str, int]:
         self.cursor.execute('SELECT name, COUNT(file_has_tag.tag_id) FROM tags LEFT JOIN file_has_tag ON tags.id = file_has_tag.tag_id GROUP BY tags.id')
         return {row[0]: row[1] for row in self.cursor.fetchall()}
+
+    def add_tag(self, tad_name: str):
+        self.cursor.execute('INSERT INTO tags (name) VALUES (?)', (tad_name,))
+        self.conn.commit()
     
     def set_tag(self, file_id: int, tag: str):
         self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
@@ -173,6 +177,16 @@ class Database:
             return
         tag_id = tag_id[0]
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ? AND tag_id = ?', (file_id, tag_id))
+        self.conn.commit()
+    
+    def delete_tag(self, tag: str):
+        self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
+        tag_id = self.cursor.fetchone()
+        if tag_id is None:
+            return
+        tag_id = tag_id[0]
+        self.cursor.execute('DELETE FROM file_has_tag WHERE tag_id = ?', (tag_id,))
+        self.cursor.execute('DELETE FROM tags WHERE id = ?', (tag_id,))
         self.conn.commit()
 
     def set_rating(self, file_id: int, rating: int|None):
@@ -258,10 +272,13 @@ class MainWindow(QMainWindow):
         self.tag_list.horizontalHeader().setSectionsClickable(True)
         self.right_layout.addWidget(self.tag_list)
         self.load_tags()
+        self.tag_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tag_list.customContextMenuRequested.connect(self.show_tag_list_context_menu)
 
         self.add_tag_layout = QHBoxLayout()
         self.right_layout.addLayout(self.add_tag_layout)
         self.add_tag_edit = QLineEdit()
+        self.add_tag_edit.returnPressed.connect(self.add_tag)
         self.add_tag_layout.addWidget(self.add_tag_edit)
         self.add_tag_button = QPushButton("Add")
         self.add_tag_button.clicked.connect(self.add_tag)
@@ -285,12 +302,14 @@ class MainWindow(QMainWindow):
             self.load_files()
     
     def add_tag(self):
+        tag = self.add_tag_edit.text()
+        self.add_tag_edit.clear()
+        self.tag_list_model.set_tag(tag)
         if self.selected_file is not None:
-            tag = self.add_tag_edit.text()
-            self.add_tag_edit.clear()
             self.database.set_tag(self.selected_file.id, tag)
-            self.tag_list_model.set_tag(tag)
             self.selected_file.tags.add(tag)
+        else:
+            self.database.add_tag(tag)
 
     def get_video_duration(self, file_path):
         result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -575,6 +594,7 @@ class TagListModel(QAbstractTableModel):
         if tag_name not in self.tags:
             self.beginInsertRows(QModelIndex(), self.rowCount(), self.rowCount())
             self.tags[tag_name] = 0
+            self.tag_names.append(tag_name)
             self.endInsertRows()
         if self.current_file:
             if tag_name not in self.current_file.tags:
@@ -624,7 +644,7 @@ class AddFilesDialog(QDialog):
         toggle_hidden_action.setShortcut("Ctrl+H")
         toggle_hidden_action.triggered.connect(self.toggle_hidden_files)
         self.addAction(toggle_hidden_action)
-        self.show_hidden_files(self.database.get_setting('show_hidden_files', 'false') == 'true')
+        self.show_hidden_files(bool(self.database.get_setting('show_hidden_files', str(False))))
         self.layout.addWidget(self.file_system_view)
 
         self.bottom_layout = QHBoxLayout()
@@ -649,7 +669,7 @@ class AddFilesDialog(QDialog):
     def toggle_hidden_files(self):
         show = not self.file_system_view_model.filter() & QDir.Hidden
         self.show_hidden_files(show)
-        self.database.set_setting('show_hidden_files', 'true' if show else 'false')
+        self.database.set_setting('show_hidden_files', str(show))
     
     def show_hidden_files(self, show: bool):
         if show:
