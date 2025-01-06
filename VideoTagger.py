@@ -161,8 +161,10 @@ class Database:
             tag_id = self.cursor.lastrowid
         else:
             tag_id = tag_id[0]
-        self.cursor.execute('INSERT INTO file_has_tag (file_id, tag_id) VALUES (?, ?)', (file_id, tag_id))
-        self.conn.commit()
+        self.cursor.execute('SELECT 1 FROM file_has_tag WHERE file_id = ? AND tag_id = ?', (file_id, tag_id))
+        if self.cursor.fetchone() is None:
+            self.cursor.execute('INSERT INTO file_has_tag (file_id, tag_id) VALUES (?, ?)', (file_id, tag_id))
+            self.conn.commit()
     
     def remove_tag(self, file_id: int, tag: str):
         self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
@@ -250,6 +252,7 @@ class MainWindow(QMainWindow):
         self.tag_list = QTableView()
         self.tag_list.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.tag_list.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.tag_list.verticalHeader().hide()
         self.tag_list.setShowGrid(False)
         self.tag_list.setSortingEnabled(True)
         self.tag_list.horizontalHeader().setSectionsClickable(True)
@@ -284,9 +287,11 @@ class MainWindow(QMainWindow):
     def add_tag(self):
         if self.selected_file is not None:
             tag = self.add_tag_edit.text()
-            self.database.set_tag(self.selected_file.id, tag)
             self.add_tag_edit.clear()
-    
+            self.database.set_tag(self.selected_file.id, tag)
+            self.tag_list_model.set_tag(tag)
+            self.selected_file.tags.add(tag)
+
     def get_video_duration(self, file_path):
         result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         return float(result.stdout)
@@ -565,6 +570,18 @@ class TagListModel(QAbstractTableModel):
         self._current_file = file
         self.checked_tags = file.tags
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+    
+    def set_tag(self, tag_name: str):
+        if tag_name not in self.tags:
+            self.beginInsertRows(QModelIndex(), self.rowCount(), self.rowCount())
+            self.tags[tag_name] = 0
+            self.endInsertRows()
+        if self.current_file:
+            if tag_name not in self.current_file.tags:
+                self.tags[tag_name] += 1
+                self.current_file.tags.add(tag_name)
+                self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
 
 
 class AddFilesDialog(QDialog):
