@@ -1,18 +1,23 @@
 #!/usr/bin/env python
 
-import humanize
+import humanfriendly
 import sqlite3
 
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread
-from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView, QMenu
+from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread, QUrl
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction, QValidator
+from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy,
+                               QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, 
+                               QFileSystemModel, QHeaderView, QMenu, QSlider, QStylePainter, QStyleOptionSlider, QStyle, QStyleOption,
+                               QSpinBox, QDateTimeEdit, QToolButton)
 
 from dataclasses import dataclass, field
-from typing import Iterable, Set, List, Dict
+from typing import Iterable, Set, List, Dict, Tuple
 import os
 import subprocess
 from PySide6.QtWidgets import QFileDialog
 from datetime import datetime
+import re
+import sys
 
 
 class VlcPlayer(QObject):
@@ -77,6 +82,16 @@ class Database:
         duration: float | None = None
         rating: int | None = None
         tags: set[str] = field(default_factory=set)
+        
+        @property
+        def name(self):
+            return os.path.basename(self.path)
+        @property
+        def name_prefix(self):
+            return self.name.split('.')[0]
+        @property
+        def extension(self):
+            return os.path.splitext(self.path)[1]
 
     def __init__(self, db_path):
         self.db_path = db_path
@@ -240,6 +255,9 @@ class MainWindow(QMainWindow):
         self.left_layout = QVBoxLayout()
         self.main_layout.addLayout(self.left_layout)
 
+        self.filter_widget = FilterWidget(self)
+        self.left_layout.addWidget(self.filter_widget)
+
         self.file_list = QTableView()
         self.file_list.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self.file_list.setSelectionMode(QTableView.SelectionMode.SingleSelection)
@@ -292,6 +310,7 @@ class MainWindow(QMainWindow):
         self.add_tag_layout = QHBoxLayout()
         self.right_layout.addLayout(self.add_tag_layout)
         self.add_tag_edit = QLineEdit()
+        self.add_tag_edit.setPlaceholderText('Add Tag')
         self.add_tag_edit.returnPressed.connect(self.add_tag)
         self.add_tag_layout.addWidget(self.add_tag_edit)
         self.add_tag_button = QPushButton("Add")
@@ -342,6 +361,33 @@ class MainWindow(QMainWindow):
         self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+
+        self.filter_widget.filter_changed.connect(proxy_model.set_filter)
+
+        if files:
+            common_path = os.path.commonpath([file.path for file in files])
+            min_rating = 5
+            max_rating = 0
+            min_size = sys.maxsize
+            max_size = 0
+            min_date = datetime.max
+            max_date = datetime.min
+            for file in files:
+                min_rating = min(min_rating, file.rating or 0)
+                max_rating = max(max_rating, file.rating or 0)
+                min_size = min(min_size, file.size)
+                max_size = max(max_size, file.size)
+                min_date = min(min_date, file.date_modified)
+                max_date = max(max_date, file.date_modified)
+            self.filter_widget.path = common_path
+            self.filter_widget.rating = (min_rating, max_rating)
+            self.filter_widget.size = (min_size, max_size)
+            self.filter_widget.date = (min_date, max_date)
+        else:
+            self.filter_widget.path = ''
+            self.filter_widget.rating = (0, 5)
+            self.filter_widget.size = (0, sys.maxsize)
+            self.filter_widget.date = (datetime.min, datetime.max)
 
     def load_tags(self):
         tags = self.database.get_tags()
@@ -447,7 +493,7 @@ class FileListModel(QAbstractTableModel):
                 else:
                     return None
             elif index.column() == 2:
-                return humanize.naturalsize(file.size)
+                return humanfriendly.format_size(file.size)
             elif index.column() == 3:
                 return file.date_modified.strftime('%Y-%m-%d %H:%M:%S')
             elif index.column() == 4:
@@ -551,7 +597,24 @@ class StarRatingDelegate(QStyledItemDelegate):
         return QSize(100, 20)
 
 
+@dataclass
+class FileFilter:
+    name_regex: str = ''
+    name_regex_case_sensitive: bool = False
+    path: str = ''
+    rating: Tuple[int, int] = (0, 5)
+    tags_whitelist: set[str] = field(default_factory=set)
+    tags_blacklist: set[str] = field(default_factory=set)
+    size: Tuple[int, int] = (0, sys.maxsize)
+    date: Tuple[datetime, datetime] = (datetime.min, datetime.max)
+
+
 class FileSortFilterProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._filter = FileFilter()
+        self._re = re.compile('')
+
     def lessThan(self, left, right):
         if self.sortColumn() != 1:  # Not size column
             return super().lessThan(left, right)
@@ -560,6 +623,38 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         right_file = self.sourceModel().files[right.row()]
     
         return left_file.size < right_file.size
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        model = self.sourceModel()
+        file = model.files[source_row]
+
+        if self._re.search(file.name_prefix) is None:
+            return False
+        if self._filter.path and not file.path.startswith(self._filter.path):
+            return False
+        rating = file.rating or 0
+        if rating < self._filter.rating[0] or rating > self._filter.rating[1]:
+            return False
+        if self._filter.tags_whitelist and not self._filter.tags_whitelist.issubset(file.tags):
+            return False
+        if self._filter.tags_blacklist and self._filter.tags_blacklist.intersection(file.tags):
+            return False
+        if file.size < self._filter.size[0] or file.size > self._filter.size[1]:
+            return False
+        if file.date_modified < self._filter.date[0] or file.date_modified > self._filter.date[1]:
+            return False
+        return True
+
+    @property
+    def filter(self):
+        return self._filter
+    @filter.setter
+    def filter(self, f: FileFilter):
+        self._filter = f
+        self._re = re.compile(f.name_regex, re.IGNORECASE if not f.name_regex_case_sensitive else re.NOFLAG)
+        self.invalidateFilter()
+    def set_filter(self, f: FileFilter):
+        self.filter = f
 
 
 class TagListModel(QAbstractTableModel):
@@ -631,9 +726,8 @@ class TagListModel(QAbstractTableModel):
     @current_file.setter
     def current_file(self, file: Database.File|None):
         if file is None:
-            self.checked_tags.clear()
+            self.checked_tags = file.tags
         self._current_file = file
-        self.checked_tags = file.tags
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
     
     def set_tag(self, tag_name: str):
@@ -648,6 +742,324 @@ class TagListModel(QAbstractTableModel):
                 self.current_file.tags.add(tag_name)
                 self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
 
+class FilterWidget(QWidget):
+    filter_changed = Signal(FileFilter)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._filter = FileFilter()
+        self.init_ui()
+
+    def init_ui(self):
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        self.name_regex_layout = QHBoxLayout()
+        self.layout.addLayout(self.name_regex_layout)
+
+        self.name_regex_edit = QLineEdit()
+        self.name_regex_edit.setText(self._filter.name_regex)
+        self.name_regex_edit.setPlaceholderText('Name Regex')
+        self.name_regex_edit.returnPressed.connect(lambda: self.set_name_regex(self.name_regex_edit.text()))
+        self.name_regex_layout.addWidget(self.name_regex_edit)
+
+        self.name_regex_case_sensitive_button = QToolButton()
+        self.name_regex_case_sensitive_button.setCheckable(True)
+        self.name_regex_case_sensitive_button.setChecked(self._filter.name_regex_case_sensitive)
+        self.name_regex_case_sensitive_button.setText('Aa')
+        self.name_regex_case_sensitive_button.toggled.connect(self.set_name_regex_case_sensitive)
+        self.name_regex_case_sensitive_button.setToolTip('Case Sensitive')
+        self.name_regex_layout.addWidget(self.name_regex_case_sensitive_button)
+
+        self.path_edit = QLineEdit()
+        self.path_edit.setText(self._filter.path)
+        self.path_edit.setPlaceholderText('Path')
+        self.path_edit.returnPressed.connect(lambda: self.set_path(self.path_edit.text()))
+        self.layout.addWidget(self.path_edit)
+
+        self.rating_layout = QHBoxLayout()
+        self.layout.addLayout(self.rating_layout)
+        self.rating_min_edit = QSpinBox()
+        self.rating_min_edit.setRange(0, 5)
+        self.rating_min_edit.setValue(self._filter.rating[0])
+        self.rating_min_edit.valueChanged.connect(lambda: self.set_min_rating(self.rating_min_edit.value()))
+        self.rating_layout.addWidget(self.rating_min_edit)
+
+        self.rating_max_edit = QSpinBox()
+        self.rating_max_edit.setRange(0, 5)
+        self.rating_max_edit.setValue(self._filter.rating[1])
+        self.rating_max_edit.valueChanged.connect(lambda: self.set_max_rating(self.rating_max_edit.value()))
+        self.rating_layout.addWidget(self.rating_max_edit)
+        
+        self.tags_whitelist_edit = QLineEdit()
+        self.tags_whitelist_edit.setText('|'.join(self._filter.tags_whitelist))
+        self.tags_whitelist_edit.setPlaceholderText('Tags Whitelist')
+        self.tags_whitelist_edit.returnPressed.connect(lambda: self.set_tags_whitelist(self.tags_whitelist_edit.text()))
+        self.layout.addWidget(self.tags_whitelist_edit)
+
+        self.tags_blacklist_edit = QLineEdit()
+        self.tags_blacklist_edit.setText('|'.join(self._filter.tags_blacklist))
+        self.tags_blacklist_edit.setPlaceholderText('Tags Blacklist')
+        self.tags_blacklist_edit.returnPressed.connect(lambda: self.set_tags_blacklist(self.tags_blacklist_edit.text()))
+        self.layout.addWidget(self.tags_blacklist_edit)
+
+        self.size_layout = QHBoxLayout()
+        self.layout.addLayout(self.size_layout)
+
+        self.size_label = QLabel('Size from')
+        self.size_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.size_layout.addWidget(self.size_label)
+
+        self.size_min_edit = QLineEdit()
+        self.size_min_edit.setText(humanfriendly.format_size(self._filter.size[0]))
+        self.size_min_edit.setPlaceholderText('Min size')
+        self.size_min_edit.setValidator(HumanReadableSizeValidator())
+        self.size_min_edit.returnPressed.connect(lambda: self.set_min_size(humanfriendly.parse_size(self.size_min_edit.text())))
+        self.size_layout.addWidget(self.size_min_edit)
+
+        self.size_to_label = QLabel('to')
+        self.size_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.size_layout.addWidget(self.size_to_label)
+
+        self.size_max_edit = QLineEdit()
+        self.size_max_edit.setText(humanfriendly.format_size(self._filter.size[1]))
+        self.size_max_edit.setPlaceholderText('Max size')
+        self.size_max_edit.setValidator(HumanReadableSizeValidator())
+        self.size_max_edit.returnPressed.connect(lambda: self.set_max_size(humanfriendly.parse_size(self.size_max_edit.text())))
+        self.size_layout.addWidget(self.size_max_edit)
+
+        self.date_layout = QHBoxLayout()
+        self.layout.addLayout(self.date_layout)
+
+        self.date_label = QLabel('Date from')
+        self.date_layout.addWidget(self.date_label)
+        self.date_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+
+        self.date_min_edit = QDateTimeEdit()
+        self.date_min_edit.setDateTime(self._filter.date[0])
+        self.date_min_edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
+        self.date_min_edit.setCalendarPopup(True)
+        self.date_min_edit.dateTimeChanged.connect(lambda: self.set_min_date(self.date_min_edit.dateTime()))
+        self.date_layout.addWidget(self.date_min_edit)
+
+        self.date_to_label = QLabel('to')
+        self.date_layout.addWidget(self.date_to_label)
+        self.date_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+
+        self.date_max_edit = QDateTimeEdit()
+        self.date_max_edit.setDateTime(self._filter.date[1])
+        self.date_max_edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
+        self.date_max_edit.setCalendarPopup(True)
+        self.date_max_edit.dateTimeChanged.connect(self.set_max_date)
+        self.date_layout.addWidget(self.date_max_edit)
+
+    def make_tag_list(self, text: str) -> set[str]:
+        tags = self.parent().parent().tag_list_model.tag_names
+        ret = set()
+        for tag in text.split('|'):
+            tag = tag.strip()
+            found = False
+            for t in tags:
+                if t.lower() == tag.lower():
+                    ret.add(t)
+                    found = True
+            if not found and tag:
+                ret.add(tag)
+        return ret
+    
+    @property
+    def filter(self) -> FileFilter:
+        return self._filter
+    @filter.setter
+    def filter(self, f: FileFilter):
+        self.name_regex = f.name_regex
+        self.path = f.path
+        self.max_rating = f.rating[0]
+        self.min_rating = f.rating[1]
+        self.tags_whitelist = f.tags_whitelist
+        self.tags_blacklist = f.tags_blacklist
+        self.min_size = f.size[0]
+        self.max_size = f.size[1]
+        self.min_date = f.date[0]
+        self.max_date = f.date[1]
+
+    @property
+    def name_regex(self) -> str:
+        return self._filter.name_regex
+    @name_regex.setter
+    def name_regex(self, name_regex: str):
+        if name_regex != self._filter.name_regex:
+            self._filter.name_regex = name_regex
+            self.name_regex_edit.setText(name_regex)
+            self.filter_changed.emit(self._filter)
+    def set_name_regex(self, name_regex: str):
+        self.name_regex = name_regex
+
+    @property
+    def name_regex_case_sensitive(self) -> bool:
+        return self._filter.name_regex_case_sensitive
+    @name_regex_case_sensitive.setter
+    def name_regex_case_sensitive(self, name_regex_case_sensitive: bool):
+        if name_regex_case_sensitive != self._filter.name_regex_case_sensitive:
+            self._filter.name_regex_case_sensitive = name_regex_case_sensitive
+            self.name_regex_case_sensitive_button.setChecked(self._filter.name_regex_case_sensitive)
+            self.filter_changed.emit(self._filter)
+    def set_name_regex_case_sensitive(self, name_regex_case_sensitive: bool):
+        self.name_regex_case_sensitive = name_regex_case_sensitive
+
+    @property
+    def path(self) -> str:
+        return self._filter.path
+    @path.setter
+    def path(self, path: str):
+        if path != self._filter.path:
+            self._filter.path = path
+            self.path_edit.setText(path)
+            self.filter_changed.emit(self._filter)
+    def set_path(self, path: str):
+        self.path = path
+
+    @property
+    def rating(self) -> Tuple[int, int]:
+        return self._filter.rating
+    @rating.setter
+    def rating(self, rating: Tuple[int, int]):
+        self.min_rating = rating[0]
+        self.max_rating = rating[1]
+    def set_rating(self, rating: Tuple[int, int]):
+        self.rating = rating
+
+    @property
+    def min_rating(self) -> int:
+        return self._filter.rating[0]
+    @min_rating.setter
+    def min_rating(self, min_rating: int):
+        if min_rating != self._filter.rating[0]:
+            self._filter.rating = (min_rating, self._filter.rating[1])
+            self.rating_min_edit.setValue(min_rating)
+            self.filter_changed.emit(self._filter)
+    def set_min_rating(self, min_rating: int):
+        self.min_rating = min_rating
+    
+    @property
+    def max_rating(self) -> int:
+        return self._filter.rating[1]
+    @max_rating.setter
+    def max_rating(self, max_rating: int):
+        if max_rating != self._filter.rating[1]:
+            self._filter.rating = (self._filter.rating[0], max_rating)
+            self.rating_max_edit.setValue(max_rating)
+            self.filter_changed.emit(self._filter)
+    def set_max_rating(self, max_rating: int):
+        self.max_rating = max_rating
+
+    @property
+    def tags_whitelist(self) -> set[str]:
+        return self._filter.tags_whitelist
+    @tags_whitelist.setter
+    def tags_whitelist(self, tags_whitelist: set[str]):
+        self._filter.tags_whitelist = tags_whitelist
+        self.tags_whitelist_edit.setText(' | '.join(tags_whitelist))
+        self.filter_changed.emit(self._filter)
+    def set_tags_whitelist(self, tags_whitelist: str):
+        self.tags_whitelist = self.make_tag_list(tags_whitelist)
+
+    @property
+    def tags_blacklist(self) -> set[str]:
+        return self._filter.tags_blacklist
+    @tags_blacklist.setter
+    def tags_blacklist(self, tags_blacklist: set[str]):
+        self._filter.tags_blacklist = tags_blacklist
+        self.tags_blacklist_edit.setText(' | '.join(tags_blacklist))
+        self.filter_changed.emit(self._filter)
+    def set_tags_blacklist(self, tags_blacklist: str):
+        self.tags_blacklist = self.make_tag_list(tags_blacklist)
+
+    @property
+    def size(self) -> Tuple[int, int]:
+        return self._filter.size
+    @size.setter
+    def size(self, size: Tuple[int, int]):
+        self.min_size = size[0]
+        self.max_size = size[1]
+    def set_size(self, size: Tuple[int, int]):
+        self.size = size
+
+    @property
+    def min_size(self, min_size: int):
+        return self._filter.size[0]
+    @min_size.setter
+    def min_size(self, min_size: int):
+        if min_size != self._filter.size[0]:
+            self._filter.size = (min_size, self._filter.size[1])
+            self.size_min_edit.setText(humanfriendly.format_size(min_size))
+            self.filter_changed.emit(self._filter)
+    def set_min_size(self, min_size: int):
+        self.min_size = min_size
+
+    @property
+    def max_size(self) -> int:
+        return self._filter.size[1]
+    @max_size.setter
+    def max_size(self, max_size: int):
+        if max_size != self._filter.size[1]:
+            self._filter.size = (self._filter.size[0], max_size)
+            self.size_max_edit.setText(humanfriendly.format_size(max_size))
+            self.filter_changed.emit(self._filter)
+    def set_max_size(self, max_size: int):
+        self.max_size = max_size
+
+    @property
+    def date(self) -> Tuple[datetime, datetime]:
+        return self._filter.date
+    @date.setter
+    def date(self, date: Tuple[datetime, datetime]):
+        self.min_date = date[0]
+        self.max_date = date[1]
+    def set_date(self, date: Tuple[datetime, datetime]):
+        self.date = date
+
+    @property
+    def min_date(self) -> datetime:
+        return self._filter.date[0]
+    @min_date.setter
+    def min_date(self, min_date: datetime):
+        if min_date != self._filter.date[0]:
+            self._filter.date = (min_date, self._filter.date[1])
+            self.date_min_edit.setDateTime(min_date)
+            self.filter_changed.emit(self._filter)
+    def set_min_date(self, min_date: datetime):
+        self.min_date = min_date
+
+    @property
+    def max_date(self) -> datetime:
+        return self._filter.date[1]
+    @max_date.setter
+    def max_date(self, max_date: datetime):
+        if max_date != self._filter.date[1]:
+            self._filter.date = (self._filter.date[0], max_date)
+            self.date_max_edit.setDateTime(max_date)
+            self.filter_changed.emit(self._filter)
+    def set_max_date(self, max_date: datetime):
+        self.max_date = max_date
+
+
+class HumanReadableSizeValidator(QValidator):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def validate(self, input_str, pos):
+        try:
+            humanfriendly.parse_size(input_str)
+            return QValidator.Acceptable, input_str, pos
+        except humanfriendly.InvalidSize:
+            return QValidator.Invalid, input_str, pos
+
+    def fixup(self, input_str):
+        try:
+            return humanfriendly.parse_size(input_str)
+        except humanfriendly.InvalidSize:
+            return ''
 
 
 class AddFilesDialog(QDialog):
@@ -667,8 +1079,6 @@ class AddFilesDialog(QDialog):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-
-        # File type filter
         self.file_filter = QLineEdit(self.database.get_setting('scan_file_filter', '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.webp;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'))
         self.file_filter.textChanged.connect(lambda text: self.database.set_setting('scan_file_filter', text))
         self.layout.addWidget(self.file_filter)
@@ -778,13 +1188,12 @@ class AddFilesDialog(QDialog):
         self.scan_worker_thread.quit()
         self.scan_worker_thread.wait()
         self.status_label.setText("Scan aborted")
-        
+
 
 def resolve_symlink(path):
     if os.path.islink(path):
         return resolve_symlink(os.path.realpath(path))
     return path
-        
 
 def main():
     app = QApplication([])
