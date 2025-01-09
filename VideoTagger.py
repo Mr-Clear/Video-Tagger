@@ -1,23 +1,20 @@
 #!/usr/bin/env python
 
-import humanfriendly
-import sqlite3
-
-from PySide6.QtCore import Qt, QMargins, QTimer, QSize, QRect, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread, QUrl
-from PySide6.QtGui import QStandardItemModel, QStandardItem, QMouseEvent, QAction, QValidator
-from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QPushButton, QListView, QTableView, QMainWindow, QSizePolicy,
-                               QVBoxLayout, QHBoxLayout, QWidget, QSlider, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, 
-                               QFileSystemModel, QHeaderView, QMenu, QSlider, QStylePainter, QStyleOptionSlider, QStyle, QStyleOption,
-                               QSpinBox, QDateTimeEdit, QToolButton)
-
-from dataclasses import dataclass, field
-from typing import Iterable, Set, List, Dict, Tuple
 import os
-import subprocess
-from PySide6.QtWidgets import QFileDialog
-from datetime import datetime
 import re
+import sqlite3
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Iterable, List, Dict, Tuple
+
+import humanfriendly
+from PySide6.QtCore import Qt, QTimer, QSize, QProcess, Signal, QObject, QSortFilterProxyModel, QAbstractTableModel, \
+    QModelIndex, QEvent, QPoint, QDir, QItemSelectionModel, QThread, QDateTime
+from PySide6.QtGui import QMouseEvent, QAction, QValidator
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableView, QMainWindow, QSizePolicy, QVBoxLayout, \
+    QHBoxLayout, QWidget, QLineEdit, QStyledItemDelegate, QDialog, QTreeView, QFileSystemModel, QHeaderView, QMenu, \
+    QSpinBox, QDateTimeEdit, QToolButton
 
 
 class VlcPlayer(QObject):
@@ -25,6 +22,7 @@ class VlcPlayer(QObject):
         super().__init__()
         self.create_vlc_instance()
 
+    # noinspection PyAttributeOutsideInit
     def create_vlc_instance(self):
         self.vlc_process = QProcess()
         self.vlc_process.setProgram("vlc")
@@ -63,13 +61,9 @@ class VlcPlayer(QObject):
     def seek_video(self, time):
         self.send(f'seek {time}')
     
-    def get_video_time(self):
-        self.send('get_time')
-        return self.vlc_process.stdout.read()
-    
     def close(self):
         self.send('quit')
-        self.vlc_process.wait_for_finished()
+        self.vlc_process.waitForFinished()
 
 
 class Database:
@@ -86,9 +80,11 @@ class Database:
         @property
         def name(self):
             return os.path.basename(self.path)
+
         @property
         def name_prefix(self):
             return self.name.split('.')[0]
+
         @property
         def extension(self):
             return os.path.splitext(self.path)[1]
@@ -134,11 +130,12 @@ class Database:
     def get_file(self, file_id: int) -> File:
         self.cursor.execute('SELECT path, size, date_modified, duration, rating FROM files WHERE id = ?', (file_id,))
         path, size, date_modified, duration, rating = self.cursor.fetchone()
-        self.cursor.execute('SELECT name FROM tags INNER JOIN file_has_tag ON tags.id = file_has_tag.tag_id WHERE file_has_tag.file_id = ?', (file_id,))
+        self.cursor.execute('SELECT name FROM tags INNER JOIN file_has_tag ON tags.id = file_has_tag.tag_id WHERE '
+                            'file_has_tag.file_id = ?', (file_id,))
         tags = {tag_row[0] for tag_row in self.cursor.fetchall()}
         return self.File(file_id, path, size, datetime.fromisoformat(date_modified), duration, rating, tags)
 
-    def find_file(self, path: str) -> File|None:
+    def find_file(self, path: str) -> File | None:
         self.cursor.execute('SELECT id FROM files WHERE path = ?', (path,))
         file_id = self.cursor.fetchone()
         return self.get_file(file_id[0]) if file_id is not None else None
@@ -149,7 +146,12 @@ class Database:
         return [self.get_file(file_id) for file_id in file_ids]
 
     def get_files_with_tags(self, whitelist: Iterable[str], blacklist: Iterable[str]) -> List[File]:
-        self.cursor.execute('SELECT id FROM files WHERE id IN (SELECT file_id FROM file_has_tag WHERE tag_id IN (SELECT id FROM tags WHERE name IN (?))) AND id NOT IN (SELECT file_id FROM file_has_tag WHERE tag_id IN (SELECT id FROM tags WHERE name IN (?)))', (whitelist, blacklist))
+        self.cursor.execute('SELECT id FROM files '
+                            ' WHERE id IN (SELECT file_id FROM file_has_tag '
+                            '               WHERE tag_id IN (SELECT id FROM tags WHERE name IN (?))) '
+                            '                 AND id NOT IN (SELECT file_id FROM file_has_tag '
+                            '                                 WHERE tag_id IN (SELECT id FROM tags WHERE name IN (?)))',
+                            (whitelist, blacklist))
         file_ids = [row[0] for row in self.cursor.fetchall()]
         return [self.get_file(file_id) for file_id in file_ids]
 
@@ -157,7 +159,8 @@ class Database:
         self.cursor.execute('SELECT id FROM files WHERE path = ?', (file.path,))
         if self.cursor.fetchone() is not None:
             return -1  # File already exists
-        self.cursor.execute('INSERT INTO files (path, size, date_modified, duration, rating) VALUES (?, ?, ?, ?, ?)', (file.path, file.size, file.date_modified.isoformat(), file.duration, file.rating))
+        self.cursor.execute('INSERT INTO files (path, size, date_modified, duration, rating) VALUES (?, ?, ?, ?, ?)',
+                            (file.path, file.size, file.date_modified.isoformat(), file.duration, file.rating))
         file_id = self.cursor.lastrowid
         for tag in file.tags:
             self.set_tag(file_id, tag)
@@ -165,46 +168,45 @@ class Database:
         return file_id
     
     def get_tags(self) -> Dict[str, int]:
-        self.cursor.execute('SELECT name, COUNT(file_has_tag.tag_id) FROM tags LEFT JOIN file_has_tag ON tags.id = file_has_tag.tag_id GROUP BY tags.id')
+        self.cursor.execute('SELECT name, COUNT(file_has_tag.tag_id) '
+                            '  FROM tags LEFT JOIN file_has_tag ON tags.id = file_has_tag.tag_id GROUP BY tags.id')
         return {row[0]: row[1] for row in self.cursor.fetchall()}
 
     def add_tag(self, tad_name: str):
         self.cursor.execute('INSERT INTO tags (name) VALUES (?)', (tad_name,))
         self.conn.commit()
-    
-    def set_tag(self, file_id: int, tag: str):
+
+    def get_tag_id(self, tag: str) -> int | None:
         self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
         tag_id = self.cursor.fetchone()
+        return tag_id[0] if tag_id is not None else None
+
+    def set_tag(self, file_id: int, tag: str):
+        tag_id = self.get_tag_id(tag)
         if tag_id is None:
             self.cursor.execute('INSERT INTO tags (name) VALUES (?)', (tag,))
             tag_id = self.cursor.lastrowid
-        else:
-            tag_id = tag_id[0]
         self.cursor.execute('SELECT 1 FROM file_has_tag WHERE file_id = ? AND tag_id = ?', (file_id, tag_id))
         if self.cursor.fetchone() is None:
             self.cursor.execute('INSERT INTO file_has_tag (file_id, tag_id) VALUES (?, ?)', (file_id, tag_id))
             self.conn.commit()
     
     def remove_tag(self, file_id: int, tag: str):
-        self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
-        tag_id = self.cursor.fetchone()
+        tag_id = self.get_tag_id(tag)
         if tag_id is None:
             return
-        tag_id = tag_id[0]
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ? AND tag_id = ?', (file_id, tag_id))
         self.conn.commit()
     
     def delete_tag(self, tag: str):
-        self.cursor.execute('SELECT id FROM tags WHERE name = ?', (tag,))
-        tag_id = self.cursor.fetchone()
+        tag_id = self.get_tag_id(tag)
         if tag_id is None:
             return
-        tag_id = tag_id[0]
         self.cursor.execute('DELETE FROM file_has_tag WHERE tag_id = ?', (tag_id,))
         self.cursor.execute('DELETE FROM tags WHERE id = ?', (tag_id,))
         self.conn.commit()
 
-    def set_rating(self, file_id: int, rating: int|None):
+    def set_rating(self, file_id: int, rating: int | None):
         self.cursor.execute('UPDATE files SET rating = ? WHERE id = ?', (rating, file_id))
         self.conn.commit()
 
@@ -213,7 +215,7 @@ class Database:
         self.cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
         self.conn.commit()
 
-    def get_setting(self, key: str, default: str|None = None) -> str|None:
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
         self.cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
         result = self.cursor.fetchone()
         return result[0] if result is not None else default
@@ -239,6 +241,10 @@ class MainWindow(QMainWindow):
         self.vlc = VlcPlayer()
 
         self.database = Database('VideoTagger.db')
+
+        self.file_list_model: FileListModel = FileListModel([])
+        self.file_list_filter_model: FileSortFilterProxyModel = FileSortFilterProxyModel()
+        self.tag_list_model: TagListModel = TagListModel({})
 
         self._init_ui()
 
@@ -269,7 +275,7 @@ class MainWindow(QMainWindow):
         self.load_files()
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
 
-        self.file_list.setContextMenuPolicy(Qt.ActionsContextMenu)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
         self.file_list_context_menu = QMenu(self)
 
         for i, header in list(enumerate(self.file_list_model.horizontal_header_labels))[1:]:
@@ -281,7 +287,7 @@ class MainWindow(QMainWindow):
             action.toggled.connect(lambda checked, col=i: self.toggle_column_visibility(col, checked))
             self.file_list_context_menu.addAction(action)
 
-        self.file_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
 
         self.add_files_button = QPushButton("Add Files")
@@ -304,7 +310,7 @@ class MainWindow(QMainWindow):
         self.tag_list.horizontalHeader().setSectionsClickable(True)
         self.right_layout.addWidget(self.tag_list)
         self.load_tags()
-        self.tag_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self.show_tag_list_context_menu)
 
         self.add_tag_layout = QHBoxLayout()
@@ -324,12 +330,12 @@ class MainWindow(QMainWindow):
     def show_add_files_dialog(self):
         dialog = AddFilesDialog(self.database, self)
         dialog.exec()
-        if dialog.result() == QDialog.Accepted:
+        if dialog.result() == QDialog.DialogCode.Accepted:
             for file_path in dialog.found_files:
                 try:
                     size = os.path.getsize(file_path)
                     date_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
-                    self.database.add_file(Database.File(None, file_path, size, date_modified))
+                    self.database.add_file(Database.File(-1, file_path, size, date_modified))
                 except Exception as e:
                     print(e)
             self.load_files()
@@ -344,25 +350,21 @@ class MainWindow(QMainWindow):
         else:
             self.database.add_tag(tag)
 
-    def get_video_duration(self, file_path):
-        result = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', file_path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        return float(result.stdout)
-
     def load_files(self):
         files = self.database.get_files()
         self.file_list_model = FileListModel(files)
-        proxy_model = FileSortFilterProxyModel()
-        proxy_model.setSourceModel(self.file_list_model)
-        self.file_list.setModel(proxy_model)
+        self.file_list_filter_model = FileSortFilterProxyModel()
+        self.file_list_filter_model.setSourceModel(self.file_list_model)
+        self.file_list.setModel(self.file_list_filter_model)
         
-        self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
 
-        self.filter_widget.filter_changed.connect(proxy_model.set_filter)
+        self.filter_widget.filter_changed.connect(self.file_list_filter_model.set_filter)
 
         if files:
             common_path = os.path.commonpath([file.path for file in files])
@@ -396,9 +398,9 @@ class MainWindow(QMainWindow):
         proxy_model.setSourceModel(self.tag_list_model)
         self.tag_list.setModel(proxy_model)
 
-        self.tag_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tag_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.tag_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tag_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tag_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.tag_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.tag_list.sortByColumn(1, Qt.SortOrder.AscendingOrder)
 
         self.tag_list_model.tag_set.connect(self.database.set_tag)
@@ -423,10 +425,10 @@ class MainWindow(QMainWindow):
         self.tag_list_model.tags.pop(tag_name)
         self.tag_list_model.endRemoveRows()
 
-    def on_file_selected(self, selected, deselected):
+    def on_file_selected(self, selected, _):
         indexes = selected.indexes()
         if indexes:
-            self.selected_file = indexes[0].data(Qt.UserRole)
+            self.selected_file = indexes[0].data(Qt.ItemDataRole.DisplayRole.UserRole)
             self.file_path_text.setText(self.selected_file.path)
             self.tag_list_model.current_file = self.selected_file
             self.rating_widget.rating = self.selected_file.rating
@@ -437,6 +439,8 @@ class MainWindow(QMainWindow):
             self.tag_list_model.current_file = None
             self.rating_widget.rating = None
             self.vlc.stop_video()
+        if self.file_list_filter_model:
+            self.file_list_filter_model.current_file = self.selected_file
 
     def update_vlc_status(self):
         self.vlc.update_status()
@@ -450,7 +454,9 @@ class MainWindow(QMainWindow):
     def on_current_file_modified(self):
         index = self.selected_file_index()
         if index and index.isValid():
-            self.file_list_model.dataChanged.emit(self.file_list_model.index(index.row(), 0), self.file_list_model.index(index.row(), self.file_list_model.columnCount() - 1))
+            self.file_list_model.dataChanged.emit(self.file_list_model.index(index.row(), 0),
+                                                  self.file_list_model.index(index.row(),
+                                                                             self.file_list_model.columnCount() - 1))
 
     def show_file_list_context_menu(self, pos):
         self.file_list_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
@@ -465,6 +471,8 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def selected_file_index(self):
+        if self.file_list_model is None:
+            return QModelIndex()
         return self.file_list_model.index(self.file_list_model.files.index(self.selected_file), 0)
 
 
@@ -483,50 +491,51 @@ class FileListModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        file = self.files[index.row()]
-        if role == Qt.DisplayRole:
+        file_object = self.files[index.row()]
+        if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == 0:
-                return os.path.basename(file.path).split('.')[0]
+                return os.path.basename(file_object.path).split('.')[0]
             if index.column() == 1:
-                if file.rating:
-                    return '★' * file.rating + '☆' * (5 - file.rating)
+                if file_object.rating:
+                    return '★' * file_object.rating + '☆' * (5 - file_object.rating)
                 else:
                     return None
             elif index.column() == 2:
-                return humanfriendly.format_size(file.size)
+                return humanfriendly.format_size(file_object.size)
             elif index.column() == 3:
-                return file.date_modified.strftime('%Y-%m-%d %H:%M:%S')
+                return file_object.date_modified.strftime('%Y-%m-%d %H:%M:%S')
             elif index.column() == 4:
-                return str(file.duration)
-        elif role == Qt.UserRole:
-            return file
+                return str(file_object.duration)
+        elif role == Qt.ItemDataRole.DisplayRole.UserRole:
+            return file_object
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return self.horizontal_header_labels[section]
         return None
+
 
 class StarRatingWidget(QWidget):
     rating_changed = Signal(int)
     
     def __init__(self, font_size, parent=None):
         super().__init__(parent)
-        self._rating: int|None = None
-        self.hovered_star: int|None = None
+        self._rating: int | None = None
+        self.hovered_star: int | None = None
         self.stars: List[QLabel] = []
         self.font_size: int = font_size
         self.init_ui()
 
     def star_mouse_event(self, i: int):
         def event(event: QMouseEvent):
-            if event.type() == QEvent.Enter:
+            if event.type() == QEvent.Type.Enter:
                 self.hovered_star = i
                 self._update()
-            elif event.type() == QEvent.Leave:
+            elif event.type() == QEvent.Type.Leave:
                 self.hovered_star = None
                 self._update()
-            elif event.type() == QEvent.MouseButtonPress:
+            elif event.type() == QEvent.Type.MouseButtonPress:
                 self._set_rating(i + 1)
         return event
 
@@ -537,13 +546,13 @@ class StarRatingWidget(QWidget):
             star.mousePressEvent = self.star_mouse_event(i)
             star.enterEvent = self.star_mouse_event(i)
             star.leaveEvent = self.star_mouse_event(i)
-            star.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+            star.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
             layout.addWidget(star)
             self.stars.append(star)
         self.setLayout(layout)
         self._update()
 
-    def _set_rating(self, rating: int|None):
+    def _set_rating(self, rating: int | None):
         if rating != self._rating:
             self._rating = rating
             self._update()
@@ -572,6 +581,7 @@ class StarRatingWidget(QWidget):
     @property
     def rating(self):
         return self._rating
+
     @rating.setter
     def rating(self, rating):
         self._rating = rating
@@ -581,11 +591,11 @@ class StarRatingWidget(QWidget):
 class StarRatingDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.star_rating_widget = StarRatingWidget(10, self.parent())
+        self.star_rating_widget = StarRatingWidget(10, parent)
         
     def paint(self, painter, option, index):
-        file: Database.File = index.data(Qt.UserRole)
-        self.star_rating_widget.rating = file.rating
+        file_object: Database.File = index.data(Qt.ItemDataRole.DisplayRole.UserRole)
+        self.star_rating_widget.rating = file_object.rating
         self.star_rating_widget.setGeometry(option.rect)
         self.star_rating_widget.resize(option.rect.size())
         painter.save()
@@ -612,8 +622,15 @@ class FileFilter:
 class FileSortFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_file: Database.File | None = None
         self._filter = FileFilter()
         self._re = re.compile('')
+
+    def sourceModel(self) -> FileListModel:
+        if isinstance(super().sourceModel(), FileListModel):
+            # noinspection PyTypeChecker
+            return super().sourceModel()
+        return FileListModel([])
 
     def lessThan(self, left, right):
         if self.sortColumn() != 1:  # Not size column
@@ -626,35 +643,51 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
-        file = model.files[source_row]
+        file_object = model.files[source_row]
 
-        if self._re.search(file.name_prefix) is None:
+        if file_object == self._current_file:
+            return True
+
+        if self._re.search(file_object.name_prefix) is None:
             return False
-        if self._filter.path and not file.path.startswith(self._filter.path):
+        if self._filter.path and not file_object.path.startswith(self._filter.path):
             return False
-        rating = file.rating or 0
+        rating = file_object.rating or 0
         if rating < self._filter.rating[0] or rating > self._filter.rating[1]:
             return False
-        if self._filter.tags_whitelist and not self._filter.tags_whitelist.issubset(file.tags):
+        if self._filter.tags_whitelist and not self._filter.tags_whitelist.issubset(file_object.tags):
             return False
-        if self._filter.tags_blacklist and self._filter.tags_blacklist.intersection(file.tags):
+        if self._filter.tags_blacklist and self._filter.tags_blacklist.intersection(file_object.tags):
             return False
-        if file.size < self._filter.size[0] or file.size > self._filter.size[1]:
+        if file_object.size < self._filter.size[0] or file_object.size > self._filter.size[1]:
             return False
-        if file.date_modified < self._filter.date[0] or file.date_modified > self._filter.date[1]:
+        if file_object.date_modified < self._filter.date[0] or file_object.date_modified > self._filter.date[1]:
             return False
         return True
 
     @property
     def filter(self):
         return self._filter
+
     @filter.setter
     def filter(self, f: FileFilter):
         self._filter = f
         self._re = re.compile(f.name_regex, re.IGNORECASE if not f.name_regex_case_sensitive else re.NOFLAG)
         self.invalidateFilter()
+
     def set_filter(self, f: FileFilter):
         self.filter = f
+
+    @property
+    def current_file(self):
+        return self._current_file
+
+    @current_file.setter
+    def current_file(self, file: Database.File | None):
+        self._current_file = file
+
+    def set_current_file(self, file: Database.File | None):
+        self.current_file = file
 
 
 class TagListModel(QAbstractTableModel):
@@ -674,21 +707,21 @@ class TagListModel(QAbstractTableModel):
     def columnCount(self, parent=QModelIndex()):
         return 3  # Checkbox, Tag Name, Tag Count
 
-    def data(self, index, role = Qt.ItemDataRole.DisplayRole):
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         tag_name = self.tag_names[index.row()]
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == 1:
                 return tag_name
             elif index.column() == 2:
                 return str(self.tags[tag_name])
-        elif role == Qt.CheckStateRole and index.column() == 0:
-            return Qt.Checked if tag_name in self.checked_tags else Qt.Unchecked
+        elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
+            return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
         return None
 
-    def setData(self, index, value, role):
-        if role == Qt.CheckStateRole and index.column() == 0:
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
             tag_name = self.tag_names[index.row()]
             if value == Qt.CheckState.Checked.value:
                 self.checked_tags.add(tag_name)
@@ -704,13 +737,13 @@ class TagListModel(QAbstractTableModel):
 
     def flags(self, index):
         if not index.isValid():
-            return Qt.NoItemFlags
+            return Qt.ItemFlag.NoItemFlags
         if index.column() == 0:
-            return Qt.ItemIsEnabled | Qt.ItemIsUserCheckable
-        return Qt.ItemIsEnabled
+            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+        return Qt.ItemFlag.ItemIsEnabled
 
-    def headerData(self, section, orientation, role):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.EditRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             if section == 0:
                 return "☑"
             elif section == 1:
@@ -724,8 +757,8 @@ class TagListModel(QAbstractTableModel):
         return self._current_file
 
     @current_file.setter
-    def current_file(self, file: Database.File|None):
-        if file is None:
+    def current_file(self, file: Database.File | None):
+        if file is not None:
             self.checked_tags = file.tags
         self._current_file = file
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
@@ -736,11 +769,11 @@ class TagListModel(QAbstractTableModel):
             self.tags[tag_name] = 0
             self.tag_names.append(tag_name)
             self.endInsertRows()
-        if self.current_file:
-            if tag_name not in self.current_file.tags:
-                self.tags[tag_name] += 1
-                self.current_file.tags.add(tag_name)
-                self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+        if self.current_file and tag_name not in self.current_file.tags:
+            self.tags[tag_name] += 1
+            self.current_file.tags.add(tag_name)
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
 
 class FilterWidget(QWidget):
     filter_changed = Signal(FileFilter)
@@ -750,6 +783,7 @@ class FilterWidget(QWidget):
         self._filter = FileFilter()
         self.init_ui()
 
+    # noinspection PyAttributeOutsideInit
     def init_ui(self):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
@@ -807,25 +841,27 @@ class FilterWidget(QWidget):
         self.layout.addLayout(self.size_layout)
 
         self.size_label = QLabel('Size from')
-        self.size_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.size_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
         self.size_layout.addWidget(self.size_label)
 
         self.size_min_edit = QLineEdit()
         self.size_min_edit.setText(humanfriendly.format_size(self._filter.size[0]))
         self.size_min_edit.setPlaceholderText('Min size')
         self.size_min_edit.setValidator(HumanReadableSizeValidator())
-        self.size_min_edit.returnPressed.connect(lambda: self.set_min_size(humanfriendly.parse_size(self.size_min_edit.text())))
+        self.size_min_edit.returnPressed.connect(
+            lambda: self.set_min_size(humanfriendly.parse_size(self.size_min_edit.text())))
         self.size_layout.addWidget(self.size_min_edit)
 
         self.size_to_label = QLabel('to')
-        self.size_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.size_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
         self.size_layout.addWidget(self.size_to_label)
 
         self.size_max_edit = QLineEdit()
         self.size_max_edit.setText(humanfriendly.format_size(self._filter.size[1]))
         self.size_max_edit.setPlaceholderText('Max size')
         self.size_max_edit.setValidator(HumanReadableSizeValidator())
-        self.size_max_edit.returnPressed.connect(lambda: self.set_max_size(humanfriendly.parse_size(self.size_max_edit.text())))
+        self.size_max_edit.returnPressed.connect(
+            lambda: self.set_max_size(humanfriendly.parse_size(self.size_max_edit.text())))
         self.size_layout.addWidget(self.size_max_edit)
 
         self.date_layout = QHBoxLayout()
@@ -833,27 +869,29 @@ class FilterWidget(QWidget):
 
         self.date_label = QLabel('Date from')
         self.date_layout.addWidget(self.date_label)
-        self.date_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.date_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
 
         self.date_min_edit = QDateTimeEdit()
-        self.date_min_edit.setDateTime(self._filter.date[0])
+        self.date_min_edit.setDateTime(to_QDateTime(self._filter.date[0]))
         self.date_min_edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
         self.date_min_edit.setCalendarPopup(True)
-        self.date_min_edit.dateTimeChanged.connect(lambda: self.set_min_date(self.date_min_edit.dateTime()))
+        self.date_min_edit.dateTimeChanged.connect(
+            lambda: self.set_min_date(to_datetime(self.date_min_edit.dateTime())))
         self.date_layout.addWidget(self.date_min_edit)
 
         self.date_to_label = QLabel('to')
         self.date_layout.addWidget(self.date_to_label)
-        self.date_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed))
+        self.date_to_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
 
         self.date_max_edit = QDateTimeEdit()
-        self.date_max_edit.setDateTime(self._filter.date[1])
+        self.date_max_edit.setDateTime(to_QDateTime(self._filter.date[1]))
         self.date_max_edit.setDisplayFormat('yyyy-MM-dd HH:mm:ss')
         self.date_max_edit.setCalendarPopup(True)
         self.date_max_edit.dateTimeChanged.connect(self.set_max_date)
         self.date_layout.addWidget(self.date_max_edit)
 
     def make_tag_list(self, text: str) -> set[str]:
+        # noinspection PyUnresolvedReferences
         tags = self.parent().parent().tag_list_model.tag_names
         ret = set()
         for tag in text.split('|'):
@@ -870,6 +908,7 @@ class FilterWidget(QWidget):
     @property
     def filter(self) -> FileFilter:
         return self._filter
+
     @filter.setter
     def filter(self, f: FileFilter):
         self.name_regex = f.name_regex
@@ -886,160 +925,188 @@ class FilterWidget(QWidget):
     @property
     def name_regex(self) -> str:
         return self._filter.name_regex
+
     @name_regex.setter
     def name_regex(self, name_regex: str):
         if name_regex != self._filter.name_regex:
             self._filter.name_regex = name_regex
             self.name_regex_edit.setText(name_regex)
             self.filter_changed.emit(self._filter)
+
     def set_name_regex(self, name_regex: str):
         self.name_regex = name_regex
 
     @property
     def name_regex_case_sensitive(self) -> bool:
         return self._filter.name_regex_case_sensitive
+
     @name_regex_case_sensitive.setter
     def name_regex_case_sensitive(self, name_regex_case_sensitive: bool):
         if name_regex_case_sensitive != self._filter.name_regex_case_sensitive:
             self._filter.name_regex_case_sensitive = name_regex_case_sensitive
             self.name_regex_case_sensitive_button.setChecked(self._filter.name_regex_case_sensitive)
             self.filter_changed.emit(self._filter)
+
     def set_name_regex_case_sensitive(self, name_regex_case_sensitive: bool):
         self.name_regex_case_sensitive = name_regex_case_sensitive
 
     @property
     def path(self) -> str:
         return self._filter.path
+
     @path.setter
     def path(self, path: str):
         if path != self._filter.path:
             self._filter.path = path
             self.path_edit.setText(path)
             self.filter_changed.emit(self._filter)
+
     def set_path(self, path: str):
         self.path = path
 
     @property
     def rating(self) -> Tuple[int, int]:
         return self._filter.rating
+
     @rating.setter
     def rating(self, rating: Tuple[int, int]):
         self.min_rating = rating[0]
         self.max_rating = rating[1]
+
     def set_rating(self, rating: Tuple[int, int]):
         self.rating = rating
 
     @property
     def min_rating(self) -> int:
         return self._filter.rating[0]
+
     @min_rating.setter
     def min_rating(self, min_rating: int):
         if min_rating != self._filter.rating[0]:
             self._filter.rating = (min_rating, self._filter.rating[1])
             self.rating_min_edit.setValue(min_rating)
             self.filter_changed.emit(self._filter)
+
     def set_min_rating(self, min_rating: int):
         self.min_rating = min_rating
     
     @property
     def max_rating(self) -> int:
         return self._filter.rating[1]
+
     @max_rating.setter
     def max_rating(self, max_rating: int):
         if max_rating != self._filter.rating[1]:
             self._filter.rating = (self._filter.rating[0], max_rating)
             self.rating_max_edit.setValue(max_rating)
             self.filter_changed.emit(self._filter)
+
     def set_max_rating(self, max_rating: int):
         self.max_rating = max_rating
 
     @property
     def tags_whitelist(self) -> set[str]:
         return self._filter.tags_whitelist
+
     @tags_whitelist.setter
     def tags_whitelist(self, tags_whitelist: set[str]):
         self._filter.tags_whitelist = tags_whitelist
         self.tags_whitelist_edit.setText(' | '.join(tags_whitelist))
         self.filter_changed.emit(self._filter)
+
     def set_tags_whitelist(self, tags_whitelist: str):
         self.tags_whitelist = self.make_tag_list(tags_whitelist)
 
     @property
     def tags_blacklist(self) -> set[str]:
         return self._filter.tags_blacklist
+
     @tags_blacklist.setter
     def tags_blacklist(self, tags_blacklist: set[str]):
         self._filter.tags_blacklist = tags_blacklist
         self.tags_blacklist_edit.setText(' | '.join(tags_blacklist))
         self.filter_changed.emit(self._filter)
+
     def set_tags_blacklist(self, tags_blacklist: str):
         self.tags_blacklist = self.make_tag_list(tags_blacklist)
 
     @property
     def size(self) -> Tuple[int, int]:
         return self._filter.size
+
     @size.setter
     def size(self, size: Tuple[int, int]):
         self.min_size = size[0]
         self.max_size = size[1]
+
     def set_size(self, size: Tuple[int, int]):
         self.size = size
 
     @property
-    def min_size(self, min_size: int):
+    def min_size(self):
         return self._filter.size[0]
+
     @min_size.setter
     def min_size(self, min_size: int):
         if min_size != self._filter.size[0]:
             self._filter.size = (min_size, self._filter.size[1])
             self.size_min_edit.setText(humanfriendly.format_size(min_size))
             self.filter_changed.emit(self._filter)
+
     def set_min_size(self, min_size: int):
         self.min_size = min_size
 
     @property
     def max_size(self) -> int:
         return self._filter.size[1]
+
     @max_size.setter
     def max_size(self, max_size: int):
         if max_size != self._filter.size[1]:
             self._filter.size = (self._filter.size[0], max_size)
             self.size_max_edit.setText(humanfriendly.format_size(max_size))
             self.filter_changed.emit(self._filter)
+
     def set_max_size(self, max_size: int):
         self.max_size = max_size
 
     @property
     def date(self) -> Tuple[datetime, datetime]:
         return self._filter.date
+
     @date.setter
     def date(self, date: Tuple[datetime, datetime]):
         self.min_date = date[0]
         self.max_date = date[1]
+
     def set_date(self, date: Tuple[datetime, datetime]):
         self.date = date
 
     @property
     def min_date(self) -> datetime:
         return self._filter.date[0]
+
     @min_date.setter
     def min_date(self, min_date: datetime):
         if min_date != self._filter.date[0]:
             self._filter.date = (min_date, self._filter.date[1])
-            self.date_min_edit.setDateTime(min_date)
+            self.date_min_edit.setDateTime(to_QDateTime(min_date))
             self.filter_changed.emit(self._filter)
+
     def set_min_date(self, min_date: datetime):
         self.min_date = min_date
 
     @property
     def max_date(self) -> datetime:
         return self._filter.date[1]
+
     @max_date.setter
     def max_date(self, max_date: datetime):
         if max_date != self._filter.date[1]:
             self._filter.date = (self._filter.date[0], max_date)
-            self.date_max_edit.setDateTime(max_date)
+            self.date_max_edit.setDateTime(to_QDateTime(max_date))
             self.filter_changed.emit(self._filter)
+
     def set_max_date(self, max_date: datetime):
         self.max_date = max_date
 
@@ -1051,9 +1118,9 @@ class HumanReadableSizeValidator(QValidator):
     def validate(self, input_str, pos):
         try:
             humanfriendly.parse_size(input_str)
-            return QValidator.Acceptable, input_str, pos
+            return QValidator.State.Acceptable, input_str, pos
         except humanfriendly.InvalidSize:
-            return QValidator.Invalid, input_str, pos
+            return QValidator.State.Invalid, input_str, pos
 
     def fixup(self, input_str):
         try:
@@ -1063,7 +1130,33 @@ class HumanReadableSizeValidator(QValidator):
 
 
 class AddFilesDialog(QDialog):
-    default_filter = QDir.Dirs | QDir.NoDotAndDotDot
+    default_filter = QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot
+
+    class ScanWorker(QObject):
+        file_found = Signal(str)
+        finished = Signal()
+
+        def __init__(self, directory, file_filter):
+            super().__init__()
+            self.directory = directory
+            self.file_filter = file_filter
+            self.abort_scan = False
+
+        def scan(self):
+            for root, _, files in os.walk(self.directory):
+                for file in files:
+                    if self.abort_scan:
+                        return
+                    if file.endswith(tuple(self.file_filter.split(';'))):
+                        try:
+                            file_path = resolve_symlink(os.path.join(root, file))
+                            self.file_found.emit(file_path)
+                        except Exception as e:
+                            print(e)
+
+        def run(self):
+            self.scan()
+            self.finished.emit()
 
     def __init__(self, database: Database, parent=None):
         super().__init__(parent)
@@ -1075,11 +1168,16 @@ class AddFilesDialog(QDialog):
 
         self.init_ui()
 
+        self.scan_worker: AddFilesDialog.ScanWorker | None = None
+        self.scan_worker_thread: QThread | None = None
+
+    # noinspection PyAttributeOutsideInit
     def init_ui(self):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-        self.file_filter = QLineEdit(self.database.get_setting('scan_file_filter', '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.webp;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'))
+        filters = '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.webp;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'
+        self.file_filter = QLineEdit(self.database.get_setting('scan_file_filter', filters))
         self.file_filter.textChanged.connect(lambda text: self.database.set_setting('scan_file_filter', text))
         self.layout.addWidget(self.file_filter)
 
@@ -1087,15 +1185,16 @@ class AddFilesDialog(QDialog):
         self.file_system_view_model = QFileSystemModel()
         self.file_system_view.setModel(self.file_system_view_model)
         self.file_system_view_model.setRootPath(QDir.rootPath())
-        self.file_system_view_model.setFilter(QDir.Dirs | QDir.NoDotAndDotDot | QDir.Hidden)
+        self.file_system_view_model.setFilter(QDir.Filter.Dirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Hidden)
         for i in range(1, 4):
             self.file_system_view.hideColumn(i)
         last_used_folder = self.database.get_setting('last_scanned_folder', QDir.homePath())
         last_used_index = self.file_system_view_model.index(last_used_folder)
         self.file_system_view.scrollTo(last_used_index)
-        self.file_system_view.selectionModel().setCurrentIndex(last_used_index, QItemSelectionModel.SelectionFlag.Select)
+        self.file_system_view.selectionModel().setCurrentIndex(last_used_index,
+                                                               QItemSelectionModel.SelectionFlag.Select)
         self.file_system_view.setExpanded(last_used_index, True)
-        self.file_system_view.setContextMenuPolicy(Qt.ActionsContextMenu)
+        self.file_system_view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
         toggle_hidden_action = QAction("Toggle Hidden Files", self)
         toggle_hidden_action.setShortcut("Ctrl+H")
         toggle_hidden_action.triggered.connect(self.toggle_hidden_files)
@@ -1123,50 +1222,24 @@ class AddFilesDialog(QDialog):
         self.bottom_layout.addWidget(self.accept_button)
 
     def toggle_hidden_files(self):
-        show = not self.file_system_view_model.filter() & QDir.Hidden
+        show = not self.file_system_view_model.filter() & QDir.Filter.Hidden
         self.show_hidden_files(show)
         self.database.set_setting('show_hidden_files', str(show))
     
     def show_hidden_files(self, show: bool):
         if show:
-            self.file_system_view_model.setFilter(AddFilesDialog.default_filter | QDir.Hidden)
+            self.file_system_view_model.setFilter(AddFilesDialog.default_filter | QDir.Filter.Hidden)
         else:
             self.file_system_view_model.setFilter(AddFilesDialog.default_filter)
 
     def scan_directory(self):
-        class ScanWorker(QObject):
-            file_found = Signal(str)
-            finished = Signal()
-            def __init__(self, directory, file_filter):
-                super().__init__()
-                self.directory = directory
-                self.file_filter = file_filter
-                self.abort_scan = False
-
-            def scan(self):
-                for root, _, files in os.walk(self.directory):
-                    for file in files:
-                        if self.abort_scan:
-                            return
-                        if file.endswith(tuple(self.file_filter.split(';'))):
-                            try:
-                                file_path = resolve_symlink(os.path.join(root, file))
-                                self.file_found.emit(file_path)
-                            except Exception as e:
-                                print(e)
-                return
-
-            def run(self):
-                self.scan()
-                self.finished.emit()
-        
         scan_root = self.file_system_view_model.filePath(self.file_system_view.currentIndex())
         self.database.set_setting('last_scanned_folder', scan_root)
         self.scan_directory_button.setEnabled(False)
         self.abort_scan_button.setEnabled(True)
         self.accept_button.setEnabled(False)
         self.status_label.setText("Scanning directory...")
-        self.scan_worker = ScanWorker(scan_root, self.file_filter.text())
+        self.scan_worker = AddFilesDialog.ScanWorker(scan_root, self.file_filter.text())
         self.scan_worker.file_found.connect(self.on_file_found)
         self.scan_worker.finished.connect(self.on_finished)
         self.scan_worker_thread = QThread()
@@ -1185,8 +1258,10 @@ class AddFilesDialog(QDialog):
         self.accept_button.setEnabled(True)
 
     def abort_scan(self):
-        self.scan_worker_thread.quit()
-        self.scan_worker_thread.wait()
+        if self.scan_worker:
+            self.scan_worker.abort_scan = True
+            self.scan_worker_thread.quit()
+            self.scan_worker_thread.wait()
         self.status_label.setText("Scan aborted")
 
 
@@ -1195,11 +1270,24 @@ def resolve_symlink(path):
         return resolve_symlink(os.path.realpath(path))
     return path
 
+
+# noinspection PyPep8Naming
+def to_QDateTime(dt: datetime):
+    if 1970 < dt.year < 2038:
+        return QDateTime.fromMSecsSinceEpoch(int(dt.timestamp() * 1000))
+    return QDateTime()
+
+
+def to_datetime(dt: QDateTime):
+    return datetime.fromtimestamp(dt.toMSecsSinceEpoch() / 1000.0)
+
+
 def main():
     app = QApplication([])
     main_window = MainWindow()
     main_window.showMaximized()
-    QApplication.exec()
+    app.exec()
+
 
 if __name__ == '__main__':
     main()
