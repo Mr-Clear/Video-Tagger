@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-
+import jsonpickle
 import os
 import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable, List, Dict, Tuple
 
 import humanfriendly
@@ -91,6 +92,10 @@ class Database:
 
     def __init__(self, db_path):
         self.db_path = db_path
+
+        self.settings = {}
+        self.settings_loaded = False
+
         self.conn = sqlite3.connect(db_path)
         self.cursor = self.conn.cursor()
 
@@ -216,17 +221,28 @@ class Database:
         self.conn.commit()
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:
-        self.cursor.execute('SELECT value FROM settings WHERE key = ?', (key,))
-        result = self.cursor.fetchone()
-        return result[0] if result is not None else default
+        self._load_settings()
+        return self.settings.get(key, default)
     
     def set_setting(self, key: str, value: str):
+        self.settings[key] = value
         self.cursor.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
         self.conn.commit()
 
     def remove_setting(self, key: str):
+        self.settings.pop(key, None)
         self.cursor.execute('DELETE FROM settings WHERE key = ?', (key,))
         self.conn.commit()
+
+    def get_settings(self) -> Dict[str, str]:
+        self._load_settings()
+        return self.settings
+
+    def _load_settings(self):
+        if not self.settings_loaded:
+            self.cursor.execute('SELECT key, value FROM settings')
+            self.settings = {row[0]: row[1] for row in self.cursor.fetchall()}
+            self.settings_loaded = True
 
 
 class MainWindow(QMainWindow):
@@ -391,6 +407,8 @@ class MainWindow(QMainWindow):
             self.filter_widget.size = (0, sys.maxsize)
             self.filter_widget.date = (datetime.min, datetime.max)
 
+        self.backup_database()
+
     def load_tags(self):
         tags = self.database.get_tags()
         self.tag_list_model = TagListModel(tags)
@@ -474,6 +492,12 @@ class MainWindow(QMainWindow):
         if self.file_list_model is None:
             return QModelIndex()
         return self.file_list_model.index(self.file_list_model.files.index(self.selected_file), 0)
+
+    def backup_database(self):
+        data = {'Files': self.file_list_model.files, 'Settings': self.database.get_settings()}
+        Path('backup').mkdir(exist_ok=True)
+        with open(f'backup/{datetime.now().isoformat()}.json', 'w', encoding='utf-8') as f:
+            f.write(jsonpickle.encode(data, unpicklable=False, indent=4))
 
 
 class FileListModel(QAbstractTableModel):
