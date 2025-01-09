@@ -19,7 +19,7 @@ class VideoFile:
 
     @property
     def name_prefix(self):
-        return self.name.split('.')[0]
+        return os.path.splitext(self.name)[0]
 
     @property
     def extension(self):

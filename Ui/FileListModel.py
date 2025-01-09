@@ -25,7 +25,7 @@ class FileListModel(QAbstractTableModel):
         file_object = self.files[index.row()]
         if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == 0:
-                return os.path.basename(file_object.path).split('.')[0]
+                return file_object.name_prefix
             if index.column() == 1:
                 if file_object.rating:
                     return '★' * file_object.rating + '☆' * (5 - file_object.rating)
