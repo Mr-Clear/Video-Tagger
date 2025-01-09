@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Tuple
 
-from PySide6.QtCore import QSortFilterProxyModel
+from PySide6.QtCore import QSortFilterProxyModel, Signal
 
 from VideoFile import VideoFile
 from Ui.FileListModel import FileListModel
@@ -23,6 +23,8 @@ class FileFilter:
 
 
 class FileSortFilterProxyModel(QSortFilterProxyModel):
+    filter_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_file: VideoFile | None = None
@@ -77,6 +79,7 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         self._filter = f
         self._re = re.compile(f.name_regex, re.IGNORECASE if not f.name_regex_case_sensitive else re.NOFLAG)
         self.invalidateFilter()
+        self.filter_changed.emit()
 
     def set_filter(self, f: FileFilter):
         self.filter = f

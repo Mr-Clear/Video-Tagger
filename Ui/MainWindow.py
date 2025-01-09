@@ -7,7 +7,7 @@ import jsonpickle
 from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
-    QLineEdit, QDialog, QHeaderView
+    QLineEdit, QDialog, QHeaderView, QLabel, QSizePolicy
 
 from Database import Database
 from VideoFile import VideoFile
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
 
+        self.load_files()
+
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_vlc_status)
         self.timer.start(1000)
@@ -62,8 +64,22 @@ class MainWindow(QMainWindow):
         self.file_list.setShowGrid(False)
         self.file_list.setSortingEnabled(True)
         self.file_list.horizontalHeader().setSectionsClickable(True)
+
+        self.file_list_model = FileListModel([])
+        self.file_list_filter_model = FileSortFilterProxyModel()
+        self.file_list_filter_model.setSourceModel(self.file_list_model)
+        self.file_list_filter_model.filter_changed.connect(self.update_file_list_status)
+        self.file_list.setModel(self.file_list_filter_model)
+        self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        self.filter_widget.filter_changed.connect(self.file_list_filter_model.set_filter)
+
         self.left_layout.addWidget(self.file_list)
-        self.load_files()
+
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
 
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -81,9 +97,16 @@ class MainWindow(QMainWindow):
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
 
+        self.database_layout = QHBoxLayout()
+        self.left_layout.addLayout(self.database_layout)
+
+        self.file_list_status_label = QLabel()
+        self.database_layout.addWidget(self.file_list_status_label)
+        self.file_list_status_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
+
         self.add_files_button = QPushButton("Add Files")
         self.add_files_button.clicked.connect(self.show_add_files_dialog)
-        self.left_layout.addWidget(self.add_files_button)
+        self.database_layout.addWidget(self.add_files_button)
 
         self.right_layout = QVBoxLayout()
         self.main_layout.addLayout(self.right_layout)
@@ -143,19 +166,8 @@ class MainWindow(QMainWindow):
 
     def load_files(self):
         files = self.database.get_files()
-        self.file_list_model = FileListModel(files)
-        self.file_list_filter_model = FileSortFilterProxyModel()
-        self.file_list_filter_model.setSourceModel(self.file_list_model)
-        self.file_list.setModel(self.file_list_filter_model)
 
-        self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-
-        self.filter_widget.filter_changed.connect(self.file_list_filter_model.set_filter)
+        self.file_list_model.set_files(files)
 
         if files:
             common_path = os.path.commonpath([file.path for file in files])
@@ -273,3 +285,7 @@ class MainWindow(QMainWindow):
         Path('../backup').mkdir(exist_ok=True)
         with open(f'backup/{datetime.now().isoformat()}.json', 'w', encoding='utf-8') as f:
             f.write(jsonpickle.encode(data, unpicklable=False, indent=4))
+
+    def update_file_list_status(self):
+        self.file_list_status_label.setText(f'Showing {self.file_list_filter_model.rowCount()} '
+                                            f'of {self.file_list_model.rowCount()} files')

@@ -30,7 +30,7 @@ class TagListModel(QAbstractTableModel):
             if index.column() == 1:
                 return tag_name
             elif index.column() == 2:
-                return str(self.tags[tag_name])
+                return self.tags[tag_name]
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
             return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
         return None

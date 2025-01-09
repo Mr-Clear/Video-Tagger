@@ -45,3 +45,8 @@ class FileListModel(QAbstractTableModel):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return self.horizontal_header_labels[section]
         return None
+
+    def set_files(self, files: List[VideoFile]):
+        self.beginResetModel()
+        self.files = files
+        self.endResetModel()
