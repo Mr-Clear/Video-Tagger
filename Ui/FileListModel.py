@@ -1,4 +1,3 @@
-import os
 from typing import List
 
 import humanfriendly
@@ -11,7 +10,7 @@ class FileListModel(QAbstractTableModel):
     def __init__(self, files: List[VideoFile]):
         super().__init__()
         self.files = files
-        self.horizontal_header_labels = ['Name', 'Rating', 'Size', 'Modified', 'Duration']
+        self.horizontal_header_labels = ['Name', 'Rating', 'Tags', 'Size', 'Modified', 'Duration']
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.files)
@@ -32,10 +31,12 @@ class FileListModel(QAbstractTableModel):
                 else:
                     return None
             elif index.column() == 2:
-                return humanfriendly.format_size(file_object.size)
+                return len(file_object.tags)
             elif index.column() == 3:
-                return file_object.date_modified.strftime('%Y-%m-%d %H:%M:%S')
+                return humanfriendly.format_size(file_object.size)
             elif index.column() == 4:
+                return file_object.date_modified.strftime('%Y-%m-%d %H:%M:%S')
+            elif index.column() == 5:
                 return str(file_object.duration)
         elif role == Qt.ItemDataRole.DisplayRole.UserRole:
             return file_object
