@@ -29,6 +29,7 @@ class VlcPlayerConnector(QObject):
         return self._read_stdout()
 
     def play_video(self, video_path):
+        self.send('clear')
         self.send(f'add {video_path}')
         self.send(f'play')
 
