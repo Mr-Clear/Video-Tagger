@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         self.main_layout.addLayout(self.left_layout)
 
         self.filter_widget = FilterWidget(self.database.get_setting('filter_expanded', 'True') == 'True',
-                                          'File List Filter', self)
+                                          'File List Filter', lambda: self.tag_list_model.tag_names, self)
         self.filter_widget.toggled.connect(lambda expanded: self.database.set_setting('filter_expanded', str(expanded)))
         self.left_layout.addWidget(self.filter_widget)
 

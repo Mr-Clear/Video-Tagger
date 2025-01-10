@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Callable
 
 import humanfriendly
 from PySide6.QtCore import Signal, QTemporaryFile, QPropertyAnimation, QAbstractAnimation, QEasingCurve
@@ -9,14 +9,16 @@ from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QHBoxLayout, QLineEdit, QT
 
 from Ui.FileSortFilterProxyModel import FileFilter
 from Ui.HumanReadableSizeValidator import HumanReadableSizeValidator
+from Ui.TagListWidget import TagListWidget
 from Ui.Tools import to_QDateTime, to_datetime
 
 
 class FilterWidget(QGroupBox):
     filter_changed = Signal(FileFilter)
 
-    def __init__(self, expanded: bool, title: str, parent=None):
+    def __init__(self, expanded: bool, title: str, get_tags_fn: Callable[[], set[str]], parent=None):
         super().__init__(parent)
+        self.get_tags_fn = get_tags_fn
         self._filter = FileFilter()
         self.icon_keep_alive: Dict[QIcon.ThemeIcon, QTemporaryFile | None] = {}
         self.collapse_animation: QPropertyAnimation | None = None
@@ -67,17 +69,17 @@ class FilterWidget(QGroupBox):
         self.rating_max_edit.valueChanged.connect(lambda: self.set_max_rating(self.rating_max_edit.value()))
         self.rating_layout.addWidget(self.rating_max_edit)
 
-        self.tags_whitelist_edit = QLineEdit()
-        self.tags_whitelist_edit.setText('|'.join(self._filter.tags_whitelist))
-        self.tags_whitelist_edit.setPlaceholderText('Tags Whitelist')
-        self.tags_whitelist_edit.returnPressed.connect(lambda: self.set_tags_whitelist(self.tags_whitelist_edit.text()))
-        self.layout.addWidget(self.tags_whitelist_edit)
+        self.tags_whitelist_widget = TagListWidget(self.get_tags_fn)
+        self.tags_whitelist_widget.set_tags(self._filter.tags_whitelist)
+        self.tags_whitelist_widget.setToolTip('Tags Whitelist')
+        self.tags_whitelist_widget.list_changed.connect(self.set_tags_whitelist)
+        self.layout.addWidget(self.tags_whitelist_widget)
 
-        self.tags_blacklist_edit = QLineEdit()
-        self.tags_blacklist_edit.setText('|'.join(self._filter.tags_blacklist))
-        self.tags_blacklist_edit.setPlaceholderText('Tags Blacklist')
-        self.tags_blacklist_edit.returnPressed.connect(lambda: self.set_tags_blacklist(self.tags_blacklist_edit.text()))
-        self.layout.addWidget(self.tags_blacklist_edit)
+        self.tags_blacklist_widget = TagListWidget(self.get_tags_fn)
+        self.tags_blacklist_widget.set_tags(self._filter.tags_whitelist)
+        self.tags_blacklist_widget.setToolTip('Tags Blacklist')
+        self.tags_blacklist_widget.list_changed.connect(self.set_tags_blacklist)
+        self.layout.addWidget(self.tags_blacklist_widget)
 
         self.size_layout = QHBoxLayout()
         self.layout.addLayout(self.size_layout)
@@ -183,21 +185,6 @@ class FilterWidget(QGroupBox):
         self.collapse_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self.collapse_animation.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
         self.collapse_animation.finished.connect(lambda: self.setFlat(not checked))
-
-    def make_tag_list(self, text: str) -> set[str]:
-        # noinspection PyUnresolvedReferences
-        tags = self.parent().parent().tag_list_model.tag_names
-        ret = set()
-        for tag in text.split('|'):
-            tag = tag.strip()
-            found = False
-            for t in tags:
-                if t.lower() == tag.lower():
-                    ret.add(t)
-                    found = True
-            if not found and tag:
-                ret.add(tag)
-        return ret
 
     @property
     def filter(self) -> FileFilter:
@@ -305,12 +292,12 @@ class FilterWidget(QGroupBox):
     @tags_whitelist.setter
     def tags_whitelist(self, tags_whitelist: set[str]):
         if self._filter.tags_whitelist != tags_whitelist:
-            self._filter.tags_whitelist = tags_whitelist
-            self.tags_whitelist_edit.setText(' | '.join(tags_whitelist))
+            self._filter.tags_whitelist = set(tags_whitelist)
+            self.tags_whitelist_widget.set_tags(tags_whitelist)
             self.filter_changed.emit(self._filter)
 
-    def set_tags_whitelist(self, tags_whitelist: str):
-        self.tags_whitelist = self.make_tag_list(tags_whitelist)
+    def set_tags_whitelist(self, tags_whitelist: set[str]):
+        self.tags_whitelist = tags_whitelist
 
     def tag_in_whitelist(self, tag: str) -> bool:
         return tag in self.tags_whitelist
@@ -330,12 +317,12 @@ class FilterWidget(QGroupBox):
     @tags_blacklist.setter
     def tags_blacklist(self, tags_blacklist: set[str]):
         if self._filter.tags_blacklist != tags_blacklist:
-            self._filter.tags_blacklist = tags_blacklist
-            self.tags_blacklist_edit.setText(' | '.join(tags_blacklist))
+            self._filter.tags_blacklist = set(tags_blacklist)
+            self.tags_blacklist_widget.set_tags(tags_blacklist)
             self.filter_changed.emit(self._filter)
 
-    def set_tags_blacklist(self, tags_blacklist: str):
-        self.tags_blacklist = self.make_tag_list(tags_blacklist)
+    def set_tags_blacklist(self, tags_blacklist: set[str]):
+        self.tags_blacklist = tags_blacklist
 
     def tag_in_blacklist(self, tag: str) -> bool:
         return tag in self.tags_blacklist
