@@ -304,12 +304,24 @@ class FilterWidget(QGroupBox):
 
     @tags_whitelist.setter
     def tags_whitelist(self, tags_whitelist: set[str]):
-        self._filter.tags_whitelist = tags_whitelist
-        self.tags_whitelist_edit.setText(' | '.join(tags_whitelist))
-        self.filter_changed.emit(self._filter)
+        if self._filter.tags_whitelist != tags_whitelist:
+            self._filter.tags_whitelist = tags_whitelist
+            self.tags_whitelist_edit.setText(' | '.join(tags_whitelist))
+            self.filter_changed.emit(self._filter)
 
     def set_tags_whitelist(self, tags_whitelist: str):
         self.tags_whitelist = self.make_tag_list(tags_whitelist)
+
+    def tag_in_whitelist(self, tag: str) -> bool:
+        return tag in self.tags_whitelist
+
+    def set_tag_in_whitelist(self, tag: str, in_whitelist: bool):
+        if in_whitelist != self.tag_in_whitelist(tag):
+            if in_whitelist:
+                self.tags_whitelist = self.tags_whitelist | {tag}
+                self.set_tag_in_blacklist(tag, False)
+            else:
+                self.tags_whitelist = self.tags_whitelist - {tag}
 
     @property
     def tags_blacklist(self) -> set[str]:
@@ -317,12 +329,24 @@ class FilterWidget(QGroupBox):
 
     @tags_blacklist.setter
     def tags_blacklist(self, tags_blacklist: set[str]):
-        self._filter.tags_blacklist = tags_blacklist
-        self.tags_blacklist_edit.setText(' | '.join(tags_blacklist))
-        self.filter_changed.emit(self._filter)
+        if self._filter.tags_blacklist != tags_blacklist:
+            self._filter.tags_blacklist = tags_blacklist
+            self.tags_blacklist_edit.setText(' | '.join(tags_blacklist))
+            self.filter_changed.emit(self._filter)
 
     def set_tags_blacklist(self, tags_blacklist: str):
         self.tags_blacklist = self.make_tag_list(tags_blacklist)
+
+    def tag_in_blacklist(self, tag: str) -> bool:
+        return tag in self.tags_blacklist
+
+    def set_tag_in_blacklist(self, tag: str, in_blacklist: bool):
+        if in_blacklist != self.tag_in_blacklist(tag):
+            if in_blacklist:
+                self.tags_blacklist = self.tags_blacklist | {tag}
+                self.set_tag_in_whitelist(tag, False)
+            else:
+                self.tags_blacklist = self.tags_blacklist - {tag}
 
     @property
     def size(self) -> Tuple[int, int]:

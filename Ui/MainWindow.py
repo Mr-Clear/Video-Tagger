@@ -7,7 +7,7 @@ import jsonpickle
 from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
-    QLineEdit, QDialog, QHeaderView, QLabel, QSizePolicy
+    QLineEdit, QDialog, QHeaderView, QLabel, QSizePolicy, QMessageBox
 
 from Database import Database
 from VideoFile import VideoFile
@@ -219,10 +219,39 @@ class MainWindow(QMainWindow):
             return
         tag_name = index.sibling(index.row(), 1).data()
         menu = QMenu(self)
+
+        add_tag_to_whitelist_action = QAction("Whitelist", self)
+        is_in_whitelist = tag_name in self.filter_widget.tags_whitelist
+        add_tag_to_whitelist_action.triggered.connect(
+            lambda: self.filter_widget.set_tag_in_whitelist(tag_name, not is_in_whitelist))
+        add_tag_to_whitelist_action.setCheckable(True)
+        add_tag_to_whitelist_action.setChecked(is_in_whitelist)
+        menu.addAction(add_tag_to_whitelist_action)
+
+        add_tag_to_blacklist_action = QAction("Blacklist", self)
+        is_in_blacklist = tag_name in self.filter_widget.tags_blacklist
+        add_tag_to_blacklist_action.triggered.connect(
+            lambda: self.filter_widget.set_tag_in_blacklist(tag_name, not is_in_blacklist))
+        add_tag_to_blacklist_action.setCheckable(True)
+        add_tag_to_blacklist_action.setChecked(is_in_blacklist)
+        menu.addAction(add_tag_to_blacklist_action)
+
+        menu.addSeparator()
+
         delete_action = QAction("Delete Tag", self)
-        delete_action.triggered.connect(lambda: self.delete_tag(tag_name))
+        delete_action.triggered.connect(lambda: self.delete_tag_question(tag_name))
         menu.addAction(delete_action)
+
         menu.exec(self.tag_list.viewport().mapToGlobal(pos))
+
+    def delete_tag_question(self, tag_name: str):
+        tag_count = self.tag_list_model.tags[tag_name]
+        message = f'Delete tag "{tag_name}" with {tag_count} files?'
+        response = QMessageBox.question(self, 'Delete Tag', message,
+                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                        QMessageBox.StandardButton.No)
+        if response == QMessageBox.StandardButton.Yes:
+            self.delete_tag(tag_name)
 
     def delete_tag(self, tag_name: str):
         self.database.delete_tag(tag_name)
