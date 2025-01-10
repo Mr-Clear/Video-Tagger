@@ -2,8 +2,7 @@ from typing import List, Set, Callable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPalette, QPainter, QMouseEvent
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QStyleOption, QStyle, QSpacerItem, QSizePolicy, QMenu, \
-    QVBoxLayout, QLineEdit
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QStyleOption, QStyle, QSpacerItem, QSizePolicy, QMenu
 
 
 class TagWidget(QWidget):
@@ -142,35 +141,3 @@ class TagListWidget(QWidget):
         opt.initFrom(self)
         painter = QPainter(self)
         self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, painter, self)
-
-
-def get_known_tags() -> set[str]:
-    return {'apple', 'banana', 'cherry', 'date', 'elderberry', 'fig', 'grape', 'honeydew', 'kiwi', 'lemon', 'mango',
-            'nectarine', 'orange', 'papaya', 'quince', 'raspberry', 'strawberry', 'tangerine', 'ugli', 'vanilla',
-            'watermelon', 'xigua', 'yam', 'zucchini', 'avocado', 'blueberry', 'cantaloupe', 'dragonfruit', 'eggplant',
-            'fennel', 'guava', 'huckleberry', 'jackfruit', 'kumquat', 'lime', 'mulberry', 'olive', 'peach', 'plum',
-            'pomegranate', 'quinoa', 'radish', 'spinach', 'tomato', 'uva', 'violet', 'walnut', 'xanthan', 'yogurt',
-            'zest', 'almond', 'broccoli', 'carrot', 'dill', 'endive', 'fava', 'garlic', 'horseradish', 'iceberg',
-            'jalapeno', 'kale', 'lettuce', 'mushroom', 'nutmeg', 'onion', 'parsley', 'quark', 'rosemary', 'sage',
-            'thyme', 'udon', 'vinegar', 'wasabi', 'xylitol', 'yeast', 'ziti', 'artichoke', 'beet', 'cabbage', 'daikon',
-            'escarole', 'fiddlehead', 'ginger', 'hibiscus', 'indigo', 'jicama', 'kohlrabi', 'leek', 'mint', 'nectar',
-            'oregano', 'pepper', 'quahog', 'rutabaga', 'sorrel', 'turnip', 'ugni', 'vermouth', 'watercress',
-            'xoconostle'}
-
-
-if __name__ == '__main__':
-    from PySide6.QtWidgets import QApplication
-    app = QApplication([])
-    window = QWidget()
-    layout = QVBoxLayout()
-    window.setLayout(layout)
-    widget = TagListWidget(get_known_tags)
-    layout.addWidget(QLineEdit())
-    layout.addWidget(widget)
-    layout.addWidget(QLineEdit())
-    layout.addWidget(QLineEdit())
-    layout.addWidget(QLineEdit())
-    window.show()
-    for tag in ['carrot', 'broccoli', 'spinach', 'pepper', 'cabbage']:
-        widget.add_tag(tag)
-    app.exec()
