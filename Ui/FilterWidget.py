@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Dict
 
 import humanfriendly
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QToolButton, QSpinBox, QLabel, \
+from PySide6.QtCore import Signal, QTemporaryFile, QPropertyAnimation, QAbstractAnimation, QEasingCurve
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QHBoxLayout, QLineEdit, QToolButton, QSpinBox, QLabel, \
     QSizePolicy, QDateTimeEdit
 
 from Ui.FileSortFilterProxyModel import FileFilter
@@ -11,16 +12,21 @@ from Ui.HumanReadableSizeValidator import HumanReadableSizeValidator
 from Ui.Tools import to_QDateTime, to_datetime
 
 
-class FilterWidget(QWidget):
+class FilterWidget(QGroupBox):
     filter_changed = Signal(FileFilter)
 
-    def __init__(self, parent=None):
+    def __init__(self, expanded: bool, title: str, parent=None):
         super().__init__(parent)
         self._filter = FileFilter()
-        self.init_ui()
+        self.icon_keep_alive: Dict[QIcon.ThemeIcon, QTemporaryFile | None] = {}
+        self.collapse_animation: QPropertyAnimation | None = None
+        self.init_ui(expanded, title)
 
     # noinspection PyAttributeOutsideInit
-    def init_ui(self):
+    def init_ui(self, expanded: bool, title: str):
+        self.setTitle(title)
+        self.setCheckable(True)
+
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
@@ -125,6 +131,58 @@ class FilterWidget(QWidget):
         self.date_max_edit.setCalendarPopup(True)
         self.date_max_edit.dateTimeChanged.connect(self.set_max_date)
         self.date_layout.addWidget(self.date_max_edit)
+
+        self.setChecked(expanded)
+        self.on_toggle(expanded)
+        self.toggled.connect(self.on_toggle)
+
+        self.setStyleSheet(f'''
+            QGroupBox {{
+                border: 1px solid gray;
+                border-radius: 3px;
+                margin-top: 0.5em;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding-left: 4px;
+                padding-right: 8px;
+                left: 2px;
+            }}
+            QGroupBox:flat {{
+                border: none;
+            }}
+            QGroupBox::indicator::unchecked {{
+                image: url({self.get_icon(QIcon.ThemeIcon.GoNext)});
+            }}
+            QGroupBox::indicator::checked {{
+                image: url({self.get_icon(QIcon.ThemeIcon.GoDown)});
+            }}
+        ''')
+
+    def get_icon(self, icon: QIcon.ThemeIcon) -> str:
+        temp_file: QTemporaryFile | None = None
+        if icon in self.icon_keep_alive:
+            temp_file = self.icon_keep_alive[icon]
+        else:
+            q_icon = QIcon.fromTheme(icon)
+            if not q_icon.isNull():
+                temp_file = QTemporaryFile()
+                if not temp_file.open():
+                    temp_file = None
+                else:
+                    q_icon.pixmap(32).save(temp_file.fileName(), 'PNG')
+            self.icon_keep_alive[icon] = temp_file
+        return temp_file.fileName()
+
+    def on_toggle(self, checked: bool):
+        self.collapse_animation = QPropertyAnimation(self, b'maximumHeight')
+        self.collapse_animation.setDuration(200)
+        self.collapse_animation.setStartValue(20 if checked else self.sizeHint().height())
+        self.collapse_animation.setEndValue(self.sizeHint().height() if checked else 20)
+        self.collapse_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self.collapse_animation.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+        self.collapse_animation.finished.connect(lambda: self.setFlat(not checked))
 
     def make_tag_list(self, text: str) -> set[str]:
         # noinspection PyUnresolvedReferences

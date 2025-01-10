@@ -54,7 +54,9 @@ class MainWindow(QMainWindow):
         self.left_layout = QVBoxLayout()
         self.main_layout.addLayout(self.left_layout)
 
-        self.filter_widget = FilterWidget(self)
+        self.filter_widget = FilterWidget(self.database.get_setting('filter_expanded', 'True') == 'True',
+                                          'File List Filter', self)
+        self.filter_widget.toggled.connect(lambda expanded: self.database.set_setting('filter_expanded', str(expanded)))
         self.left_layout.addWidget(self.filter_widget)
 
         self.file_list = QTableView()
