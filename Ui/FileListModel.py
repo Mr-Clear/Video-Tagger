@@ -2,6 +2,7 @@ from typing import List
 
 import humanfriendly
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtGui import QFont
 
 from VideoFile import VideoFile
 
@@ -11,6 +12,7 @@ class FileListModel(QAbstractTableModel):
         super().__init__()
         self.files = files
         self.horizontal_header_labels = ['Name', 'Rating', 'Tags', 'Size', 'Modified', 'Duration']
+        self._current_playing: VideoFile | None = None
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.files)
@@ -38,6 +40,13 @@ class FileListModel(QAbstractTableModel):
                 return file_object.date_modified.strftime('%Y-%m-%d %H:%M:%S')
             elif index.column() == 5:
                 return str(file_object.duration)
+        elif role == Qt.ItemDataRole.FontRole:
+            if file_object == self._current_playing:
+                font = QFont()
+                font.setBold(True)
+                font.setItalic(True)
+                return font
+            return None
         elif role == Qt.ItemDataRole.DisplayRole.UserRole:
             return file_object
         return None
@@ -51,3 +60,12 @@ class FileListModel(QAbstractTableModel):
         self.beginResetModel()
         self.files = files
         self.endResetModel()
+
+    @property
+    def current_playing(self):
+        return self._current_playing
+
+    @current_playing.setter
+    def current_playing(self, file: VideoFile | None):
+        self._current_playing = file
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))

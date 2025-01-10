@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.selected_file: VideoFile | None = None
+        self.playing_file: VideoFile | None = None
 
         self.setWindowTitle("Video Tagger")
         self.setGeometry(100, 100, 800, 600)
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.file_list)
 
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
+        self.file_list.doubleClicked.connect(self.play_current_file)
 
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
         self.file_list_context_menu = QMenu(self)
@@ -268,15 +270,21 @@ class MainWindow(QMainWindow):
             self.file_path_text.setText(self.selected_file.path)
             self.tag_list_model.current_file = self.selected_file
             self.rating_widget.rating = self.selected_file.rating
-            self.vlc.play_video(self.selected_file.path)
         else:
             self.selected_file = None
             self.file_path_text.clear()
             self.tag_list_model.current_file = None
             self.rating_widget.rating = None
-            self.vlc.stop_video()
         if self.file_list_filter_model:
             self.file_list_filter_model.current_file = self.selected_file
+
+    def play_current_file(self):
+        self.playing_file = self.selected_file
+        if self.playing_file:
+            self.vlc.play_video(self.playing_file.path)
+        else:
+            self.vlc.stop_video()
+        self.file_list_model.current_playing = self.playing_file
 
     def update_vlc_status(self):
         self.vlc.update_status()

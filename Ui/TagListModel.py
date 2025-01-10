@@ -35,21 +35,6 @@ class TagListModel(QAbstractTableModel):
             return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
         return None
 
-    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
-        if role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
-            tag_name = self.tag_names[index.row()]
-            if value == Qt.CheckState.Checked.value:
-                self.checked_tags.add(tag_name)
-                self.tags[tag_name] += 1
-                self.tag_set.emit(self.current_file.id, tag_name)
-            else:
-                self.checked_tags.remove(tag_name)
-                self.tags[tag_name] -= 1
-                self.tag_removed.emit(self.current_file.id, tag_name)
-            self.dataChanged.emit(index, index.sibling(index.row(), self.columnCount() - 1))
-            return True
-        return False
-
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
