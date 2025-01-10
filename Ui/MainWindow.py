@@ -86,8 +86,9 @@ class MainWindow(QMainWindow):
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
         self.file_list.doubleClicked.connect(self.play_current_file)
 
-        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
-        self.file_list_context_menu = QMenu(self)
+        self.file_list_header = self.file_list.horizontalHeader()
+        self.file_list_header.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
+        self.file_list_header_context_menu = QMenu(self)
 
         for i, header in list(enumerate(self.file_list_model.horizontal_header_labels))[1:]:
             action = QAction(header, self.file_list)
@@ -96,10 +97,10 @@ class MainWindow(QMainWindow):
             action.setChecked(column_visible)
             self.file_list.setColumnHidden(i, not column_visible)
             action.toggled.connect(lambda checked, col=i: self.toggle_column_visibility(col, checked))
-            self.file_list_context_menu.addAction(action)
+            self.file_list_header_context_menu.addAction(action)
 
-        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
+        self.file_list_header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list_header.customContextMenuRequested.connect(self.show_file_list_context_menu)
 
         self.database_layout = QHBoxLayout()
         self.left_layout.addLayout(self.database_layout)
@@ -303,11 +304,11 @@ class MainWindow(QMainWindow):
                                                                              self.file_list_model.columnCount() - 1))
 
     def show_file_list_context_menu(self, pos):
-        self.file_list_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
+        self.file_list_header_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
 
     def toggle_column_visibility(self, column, visible):
         self.file_list.setColumnHidden(column, not visible)
-        for action in self.file_list_context_menu.actions():
+        for action in self.file_list_header_context_menu.actions():
             self.database.set_setting(f'column_visibility_{action.text()}', str(action.isChecked()))
 
     def close_event(self, event):
