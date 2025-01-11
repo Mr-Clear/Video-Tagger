@@ -1,6 +1,7 @@
 from typing import Dict
 
 from PySide6.QtCore import QAbstractTableModel, Signal, QModelIndex, Qt
+from PySide6.QtGui import QColor
 
 from VideoFile import VideoFile
 
@@ -15,6 +16,7 @@ class TagListModel(QAbstractTableModel):
         self.tag_names = list(tags.keys())
         self.checked_tags = set()
         self._current_file: VideoFile | None = None
+        self._max_count = max(tags.values(), default=0)
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.tags)
@@ -33,6 +35,13 @@ class TagListModel(QAbstractTableModel):
                 return self.tags[tag_name]
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
             return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
+        elif role == Qt.ItemDataRole.ForegroundRole:
+            linear = self.tags[tag_name] / self._max_count
+            root2 = linear ** 0.5
+            root10 = linear ** 0.1
+            return QColor.fromHsvF((60 / 360 * (1 - root10)), root2, 1)
+        elif role == Qt.ItemDataRole.UserRole:
+            return tag_name, self.tags[tag_name] if tag_name in self.tags else 0
         return None
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
@@ -46,6 +55,8 @@ class TagListModel(QAbstractTableModel):
                 self.checked_tags.remove(tag_name)
                 self.tags[tag_name] -= 1
                 self.tag_removed.emit(self.current_file.id, tag_name)
+            if self.tags[tag_name] > self._max_count:
+                self._max_count = self.tags[tag_name]
             self.dataChanged.emit(index, index.sibling(index.row(), self.columnCount() - 1))
             return True
         return False
