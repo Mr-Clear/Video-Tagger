@@ -56,7 +56,7 @@ class AddFilesDialog(QDialog):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-        filters = '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.webp;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'
+        filters = '.mp4;.avi;.mkv;.mov;.wmv;.flv;.webm;.mpeg;.mpg;.m4v;.3gp;.vob;.ogv;.ogg;.mxf;.rm;.divx;.xvid'
         self.file_filter = QLineEdit(self.database.get_setting('scan_file_filter', filters))
         self.file_filter.textChanged.connect(lambda text: self.database.set_setting('scan_file_filter', text))
         self.layout.addWidget(self.file_filter)
