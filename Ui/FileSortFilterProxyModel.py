@@ -27,9 +27,11 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._current_file: VideoFile | None = None
+        self._selected_file: VideoFile | None = None
+        self._playing_file: VideoFile | None = None
         self._filter = FileFilter()
         self._re = re.compile('')
+        self.setDynamicSortFilter(False)
 
     def sourceModel(self) -> FileListModel:
         if isinstance(super().sourceModel(), FileListModel):
@@ -50,7 +52,7 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         model = self.sourceModel()
         file_object = model.files[source_row]
 
-        if file_object == self._current_file:
+        if file_object == self._selected_file or file_object == self._playing_file:
             return True
 
         if self._re.search(file_object.name_prefix) is None:
@@ -84,13 +86,8 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
     def set_filter(self, f: FileFilter):
         self.filter = f
 
-    @property
-    def current_file(self):
-        return self._current_file
+    def set_selected_file(self, file: VideoFile | None):
+        self._selected_file = file
 
-    @current_file.setter
-    def current_file(self, file: VideoFile | None):
-        self._current_file = file
-
-    def set_current_file(self, file: VideoFile | None):
-        self.current_file = file
+    def set_playing_file(self, file: VideoFile | None):
+        self._playing_file = file

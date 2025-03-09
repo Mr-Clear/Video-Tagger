@@ -61,11 +61,24 @@ class FileListModel(QAbstractTableModel):
         self.files = files
         self.endResetModel()
 
+    def on_file_modified(self, file: VideoFile):
+        index = self.index(self.files.index(file), 0)
+        if index and index.isValid():
+            self.dataChanged.emit(self.index(index.row(), 0),
+                                  self.index(index.row(), self.columnCount() - 1))
+
     @property
-    def current_playing(self):
+    def playing_file(self):
         return self._current_playing
 
-    @current_playing.setter
-    def current_playing(self, file: VideoFile | None):
+    @playing_file.setter
+    def playing_file(self, file: VideoFile | None):
+        last_playing = self._current_playing
         self._current_playing = file
-        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+        if last_playing:
+            self.on_file_modified(last_playing)
+        if file:
+            self.on_file_modified(file)
+    
+    def set_playing_file(self, file: VideoFile | None):
+        self.playing_file = file

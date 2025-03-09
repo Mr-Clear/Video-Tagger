@@ -1,4 +1,4 @@
 **/__pycache__/**
 .idea/**
-backup/**
+.backup/**
 VideoTagger.db

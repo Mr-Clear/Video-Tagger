@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex
+from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
     QLineEdit, QDialog, QHeaderView, QLabel, QSizePolicy, QMessageBox
@@ -21,6 +21,10 @@ from VlcPlayerConnector import VlcPlayerConnector
 
 
 class MainWindow(QMainWindow):
+    selected_file_changed = Signal(VideoFile)
+    selected_file_modified = Signal(VideoFile)
+    playing_file_changed = Signal(VideoFile)
+
     def __init__(self):
         super().__init__()
 
@@ -37,6 +41,7 @@ class MainWindow(QMainWindow):
         self.file_list_model: FileListModel = FileListModel([])
         self.file_list_filter_model: FileSortFilterProxyModel = FileSortFilterProxyModel()
         self.tag_list_model: TagListModel = TagListModel({})
+        self.selected_file_changed.connect(self.tag_list_model.set_current_file)
 
         self._init_ui()
 
@@ -72,6 +77,9 @@ class MainWindow(QMainWindow):
         self.file_list_filter_model = FileSortFilterProxyModel()
         self.file_list_filter_model.setSourceModel(self.file_list_model)
         self.file_list_filter_model.filter_changed.connect(self.update_file_list_status)
+        self.selected_file_changed.connect(self.file_list_filter_model.set_selected_file)
+        self.selected_file_modified.connect(self.file_list_model.on_file_modified)
+        self.playing_file_changed.connect(self.file_list_model.set_playing_file)
         self.file_list.setModel(self.file_list_filter_model)
         self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -84,7 +92,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.file_list)
 
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
-        self.file_list.doubleClicked.connect(self.play_current_file)
+        self.file_list.doubleClicked.connect(self.play_selected_file)
 
         self.file_list_header = self.file_list.horizontalHeader()
         self.file_list_header.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -166,6 +174,7 @@ class MainWindow(QMainWindow):
         if self.selected_file is not None:
             self.database.set_tag(self.selected_file.id, tag)
             self.selected_file.tags.add(tag)
+            self._emit_selected_file_modified()
         else:
             self.database.add_tag(tag)
 
@@ -214,7 +223,9 @@ class MainWindow(QMainWindow):
         self.tag_list.sortByColumn(1, Qt.SortOrder.AscendingOrder)
 
         self.tag_list_model.tag_set.connect(self.database.set_tag)
+        self.tag_list_model.tag_set.connect(self._emit_selected_file_modified)
         self.tag_list_model.tag_removed.connect(self.database.remove_tag)
+        self.tag_list_model.tag_removed.connect(self._emit_selected_file_modified)
 
     def show_tag_list_context_menu(self, pos):
         index = self.tag_list.indexAt(pos)
@@ -267,25 +278,17 @@ class MainWindow(QMainWindow):
     def on_file_selected(self, selected, _):
         indexes = selected.indexes()
         if indexes:
-            self.selected_file = indexes[0].data(Qt.ItemDataRole.DisplayRole.UserRole)
-            self.file_path_text.setText(self.selected_file.path)
-            self.tag_list_model.current_file = self.selected_file
-            self.rating_widget.rating = self.selected_file.rating
+            self.set_selected_file(indexes[0].data(Qt.ItemDataRole.DisplayRole.UserRole))
         else:
-            self.selected_file = None
-            self.file_path_text.clear()
-            self.tag_list_model.current_file = None
-            self.rating_widget.rating = None
-        if self.file_list_filter_model:
-            self.file_list_filter_model.current_file = self.selected_file
+            self.set_selected_file(None)
 
-    def play_current_file(self):
+    def play_selected_file(self):
         self.playing_file = self.selected_file
+        self.playing_file_changed.emit(self.playing_file)
         if self.playing_file:
             self.vlc.play_video(self.playing_file.path)
         else:
             self.vlc.stop_video()
-        self.file_list_model.current_playing = self.playing_file
 
     def update_vlc_status(self):
         self.vlc.update_status()
@@ -294,14 +297,10 @@ class MainWindow(QMainWindow):
         if self.selected_file is not None:
             self.database.set_rating(self.selected_file.id, rating)
             self.selected_file.rating = rating
-            self.on_current_file_modified()
+            self._emit_selected_file_modified()
 
-    def on_current_file_modified(self):
-        index = self.selected_file_index()
-        if index and index.isValid():
-            self.file_list_model.dataChanged.emit(self.file_list_model.index(index.row(), 0),
-                                                  self.file_list_model.index(index.row(),
-                                                                             self.file_list_model.columnCount() - 1))
+    def _emit_selected_file_modified(self):
+        self.selected_file_modified.emit(self.selected_file)
 
     def show_file_list_context_menu(self, pos):
         self.file_list_header_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
@@ -315,17 +314,33 @@ class MainWindow(QMainWindow):
         self.vlc.close()
         event.accept()
 
-    def selected_file_index(self):
-        if self.file_list_model is None:
-            return QModelIndex()
-        return self.file_list_model.index(self.file_list_model.files.index(self.selected_file), 0)
-
     def backup_database(self):
         data = {'Files': self.file_list_model.files, 'Settings': self.database.get_settings()}
-        Path('../backup').mkdir(exist_ok=True)
-        with open(f'backup/{datetime.now().isoformat()}.json', 'w', encoding='utf-8') as f:
+
+        Path('.backup').mkdir(exist_ok=True)
+        with open(f'.backup/{datetime.now().isoformat()}.json', 'w', encoding='utf-8') as f:
             f.write(jsonpickle.encode(data, unpicklable=False, indent=4))
 
     def update_file_list_status(self):
         self.file_list_status_label.setText(f'Showing {self.file_list_filter_model.rowCount()} '
                                             f'of {self.file_list_model.rowCount()} files')
+
+    def set_selected_file(self, file: VideoFile):
+        if self.selected_file != file:
+            if file is not None:
+                self.file_path_text.setText(file.path)
+                self.tag_list_model.current_file = file
+                self.rating_widget.rating = file.rating
+                self.tag_list.setEnabled(True)
+                self.add_tag_edit.setEnabled(True)
+                self.rating_widget.setEnabled(True)
+            else:
+                self.file_path_text.clear()
+                self.tag_list_model.current_file = None
+                self.rating_widget.rating = None
+                self.tag_list.setEnabled(False)
+                self.add_tag_edit.setEnabled(False)
+                self.rating_widget.setEnabled(False)
+            
+            self.selected_file = file
+            self.selected_file_changed.emit(file)
