@@ -40,13 +40,20 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         return FileListModel([])
 
     def lessThan(self, left, right):
-        if self.sortColumn() != 1:  # Not size column
-            return super().lessThan(left, right)
-
         left_file = self.sourceModel().files[left.row()]
         right_file = self.sourceModel().files[right.row()]
-
-        return left_file.size < right_file.size
+        if self.sortColumn() == 0:  # Name column
+            return left_file.name < right_file.name
+        if self.sortColumn() == 1:  # Rating column
+            return left_file.rating < right_file.rating
+        if self.sortColumn() == 2:  # Tags column
+            return len(left_file.tags) < len(right_file.tags)
+        if self.sortColumn() == 3:  # Size column
+            return left_file.size < right_file.size
+        if self.sortColumn() == 4:  # Modified column
+            return left_file.date_modified < right_file.date_modified
+        if self.sortColumn() == 5:  # Duration column
+            return left_file.duration < right_file.duration
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
