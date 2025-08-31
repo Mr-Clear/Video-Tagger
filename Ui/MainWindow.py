@@ -7,7 +7,7 @@ import jsonpickle
 from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
-    QLineEdit, QDialog, QHeaderView, QLabel, QSizePolicy, QMessageBox
+    QLineEdit, QDialog, QHeaderView, QInputDialog, QLabel, QSizePolicy, QMessageBox
 
 from Database import Database
 from VideoFile import VideoFile
@@ -252,11 +252,22 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
+        rename_action = QAction("Rename Tag", self)
+        rename_action.triggered.connect(lambda: self.rename_tag(tag_name))
+        menu.addAction(rename_action)
+
         delete_action = QAction("Delete Tag", self)
         delete_action.triggered.connect(lambda: self.delete_tag_question(tag_name))
         menu.addAction(delete_action)
 
         menu.exec(self.tag_list.viewport().mapToGlobal(pos))
+
+    def rename_tag(self, old_name: str):
+        new_name, ok = QInputDialog.getText(self, 'Rename Tag', 'New tag name:', text=old_name)
+        if ok and new_name and new_name != old_name:
+            self.database.rename_tag(old_name, new_name)
+            self.tag_list_model.update_tag_name(old_name, new_name)
+            self.file_list_model.on_tag_renamed(old_name, new_name)
 
     def delete_tag_question(self, tag_name: str):
         tag_count = self.tag_list_model.tags[tag_name]
@@ -341,6 +352,6 @@ class MainWindow(QMainWindow):
                 self.tag_list.setEnabled(False)
                 self.add_tag_edit.setEnabled(False)
                 self.rating_widget.setEnabled(False)
-            
+
             self.selected_file = file
             self.selected_file_changed.emit(file)

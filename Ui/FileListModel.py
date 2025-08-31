@@ -67,6 +67,13 @@ class FileListModel(QAbstractTableModel):
             self.dataChanged.emit(self.index(index.row(), 0),
                                   self.index(index.row(), self.columnCount() - 1))
 
+    def on_tag_renamed(self, old_name: str, new_name: str):
+        for file in self.files:
+            if old_name in file.tags:
+                file.tags.remove(old_name)
+                file.tags.add(new_name)
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
     @property
     def playing_file(self):
         return self._current_playing
@@ -79,6 +86,6 @@ class FileListModel(QAbstractTableModel):
             self.on_file_modified(last_playing)
         if file:
             self.on_file_modified(file)
-    
+
     def set_playing_file(self, file: VideoFile | None):
         self.playing_file = file

@@ -61,6 +61,12 @@ class TagListModel(QAbstractTableModel):
             return True
         return False
 
+    def update_tag_name(self, old_name: str, new_name: str):
+        if old_name in self.tags:
+            self.tags[new_name] = self.tags.pop(old_name)
+            self.tag_names[self.tag_names.index(old_name)] = new_name
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags

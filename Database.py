@@ -119,6 +119,10 @@ class Database:
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ? AND tag_id = ?', (file_id, tag_id))
         self.conn.commit()
 
+    def rename_tag(self, old_name: str, new_name: str):
+        self.cursor.execute('UPDATE tags SET name = ? WHERE name = ?', (new_name, old_name))
+        self.conn.commit()
+
     def delete_tag(self, tag: str):
         tag_id = self.get_tag_id(tag)
         if tag_id is None:
