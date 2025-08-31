@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal
+from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal, QRegularExpression
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
     QLineEdit, QDialog, QHeaderView, QInputDialog, QLabel, QSizePolicy, QMessageBox
@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self.file_list_model: FileListModel = FileListModel([])
         self.file_list_filter_model: FileSortFilterProxyModel = FileSortFilterProxyModel()
         self.tag_list_model: TagListModel = TagListModel({})
+        self.tag_list_filter_model: QSortFilterProxyModel = QSortFilterProxyModel()
         self.selected_file_changed.connect(self.tag_list_model.set_current_file)
 
         self._init_ui()
@@ -145,6 +146,7 @@ class MainWindow(QMainWindow):
         self.add_tag_edit = QLineEdit()
         self.add_tag_edit.setPlaceholderText('Add Tag')
         self.add_tag_edit.returnPressed.connect(self.add_tag)
+        self.add_tag_edit.textChanged.connect(self.on_add_tag_text_changed)
         self.add_tag_layout.addWidget(self.add_tag_edit)
         self.add_tag_button = QPushButton("Add")
         self.add_tag_button.clicked.connect(self.add_tag)
@@ -177,6 +179,9 @@ class MainWindow(QMainWindow):
             self._emit_selected_file_modified()
         else:
             self.database.add_tag(tag)
+
+    def on_add_tag_text_changed(self, text):
+        self.tag_list_filter_model.setFilterRegularExpression(QRegularExpression(text, QRegularExpression.PatternOption.CaseInsensitiveOption))
 
     def load_files(self):
         files = self.database.get_files()
@@ -213,9 +218,11 @@ class MainWindow(QMainWindow):
     def load_tags(self):
         tags = self.database.get_tags()
         self.tag_list_model = TagListModel(tags)
-        proxy_model = QSortFilterProxyModel()
-        proxy_model.setSourceModel(self.tag_list_model)
-        self.tag_list.setModel(proxy_model)
+        self.tag_list_filter_model = QSortFilterProxyModel()
+        self.tag_list_filter_model.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.tag_list_filter_model.setFilterKeyColumn(1)
+        self.tag_list_filter_model.setSourceModel(self.tag_list_model)
+        self.tag_list.setModel(self.tag_list_filter_model)
 
         self.tag_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.tag_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
