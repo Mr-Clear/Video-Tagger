@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug VideoTagger",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "VideoTagger.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Run VideoTagger",
+            "type": "debugpy",
+            "pythonArgs": ["-O"],
+            "request": "launch",
+            "program": "VideoTagger.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}
