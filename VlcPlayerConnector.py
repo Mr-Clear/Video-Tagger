@@ -43,8 +43,28 @@ class VlcPlayerConnector(QObject):
         self.send('status')
         self.send('get_time')
 
+    def get_position(self):
+        pos = self.send('get_time')
+        return int(pos)
+
     def seek_video(self, time):
         self.send(f'seek {time}')
+
+    def seek_relative(self, offset):
+        self.send(f'seek {self.get_position() + offset}')
+
+    def get_volume(self):
+        vol = self.send('volume')
+        return int(vol)
+
+    def set_volume(self, volume):
+        self.send(f'volume {volume}')
+
+    def set_volume_relative(self, offset):
+        if offset > 0:
+            self.send(f'volup {offset}')
+        else:
+            self.send(f'voldown {-offset}')
 
     def close(self):
         self.send('quit')

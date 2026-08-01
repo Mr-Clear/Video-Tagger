@@ -5,8 +5,8 @@ from pathlib import Path
 
 import jsonpickle
 from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal, QRegularExpression
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
+from PySide6.QtGui import QAction, QKeyEvent, QWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
     QLineEdit, QDialog, QHeaderView, QInputDialog, QLabel, QSizePolicy, QMessageBox
 
 from Database import Database
@@ -51,6 +51,8 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_vlc_status)
         self.timer.start(1000)
+
+        QApplication.instance().installEventFilter(self)
 
     def _init_ui(self):
         self.central_widget = QWidget()
@@ -156,6 +158,24 @@ class MainWindow(QMainWindow):
         self.rating_widget.rating_changed.connect(self.set_rating)
         self.right_layout.addWidget(self.rating_widget)
 
+    def eventFilter(self, obj, event):
+        if not isinstance(obj, QWindow):
+            return super().eventFilter(obj, event)
+        if event.type() == QKeyEvent.KeyPress:
+            key = event.key()
+            if key == Qt.Key_Space:
+                self.vlc.pause_video()
+            elif key == Qt.Key_Left:
+                self.vlc.seek_relative(-5)
+            elif key == Qt.Key_Right:
+                self.vlc.seek_relative(5)
+            elif key == Qt.Key_Up:
+                self.vlc.set_volume_relative(1)
+            elif key == Qt.Key_Down:
+                self.vlc.set_volume_relative(-1)
+
+        return super().eventFilter(obj, event)
+
     def show_add_files_dialog(self):
         dialog = AddFilesDialog(self.database, self)
         dialog.exec()
@@ -203,6 +223,7 @@ class MainWindow(QMainWindow):
                 max_size = max(max_size, file.size)
                 min_date = min(min_date, file.date_modified)
                 max_date = max(max_date, file.date_modified)
+            min_size = max(min_size, 10_000_000)
             self.filter_widget.path = common_path
             self.filter_widget.rating = (min_rating, max_rating)
             self.filter_widget.size = (min_size, max_size)
