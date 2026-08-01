@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
 
         self.file_list = QTableView()
         self.file_list.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-        self.file_list.setSelectionMode(QTableView.SelectionMode.SingleSelection)
+        self.file_list.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.file_list.verticalHeader().hide()
         self.file_list.setShowGrid(False)
         self.file_list.setSortingEnabled(True)
@@ -96,6 +96,8 @@ class MainWindow(QMainWindow):
 
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
         self.file_list.doubleClicked.connect(self.play_selected_file)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
 
         self.file_list_header = self.file_list.horizontalHeader()
         self.file_list_header.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
@@ -315,9 +317,9 @@ class MainWindow(QMainWindow):
         self.tag_list_model.endRemoveRows()
 
     def on_file_selected(self, selected, _):
-        indexes = selected.indexes()
-        if indexes:
-            self.set_selected_file(indexes[0].data(Qt.ItemDataRole.DisplayRole.UserRole))
+        current_index = self.file_list.selectionModel().currentIndex()
+        if current_index.isValid():
+            self.set_selected_file(current_index.data(Qt.ItemDataRole.DisplayRole.UserRole))
         else:
             self.set_selected_file(None)
 
@@ -341,8 +343,90 @@ class MainWindow(QMainWindow):
     def _emit_selected_file_modified(self):
         self.selected_file_modified.emit(self.selected_file)
 
+    @staticmethod
+    def get_available_tags_for_files(files: list[VideoFile]) -> list[str]:
+        return sorted({tag for file in files for tag in file.tags})
+
+    def _get_selected_files(self) -> list[VideoFile]:
+        selected_files: list[VideoFile] = []
+        for index in self.file_list.selectionModel().selectedRows():
+            file = index.data(Qt.ItemDataRole.DisplayRole.UserRole)
+            if file is not None and file not in selected_files:
+                selected_files.append(file)
+        return selected_files
+
+    def _apply_tag_to_selected_files(self, tag: str, add_tag: bool):
+        selected_files = self._get_selected_files()
+        if not selected_files:
+            return
+
+        for file in selected_files:
+            if add_tag:
+                self.database.set_tag(file.id, tag)
+                file.tags.add(tag)
+            else:
+                self.database.remove_tag(file.id, tag)
+                file.tags.discard(tag)
+            self.file_list_model.on_file_modified(file)
+
+        if self.selected_file is not None and self.selected_file in selected_files:
+            self._emit_selected_file_modified()
+
+    def _apply_rating_to_selected_files(self, rating: int | None):
+        selected_files = self._get_selected_files()
+        if not selected_files:
+            return
+
+        for file in selected_files:
+            self.database.set_rating(file.id, rating)
+            file.rating = rating
+            self.file_list_model.on_file_modified(file)
+
+        if self.selected_file is not None and self.selected_file in selected_files:
+            self._emit_selected_file_modified()
+
     def show_file_list_context_menu(self, pos):
-        self.file_list_header_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
+        if self.file_list_header.underMouse():
+            self.file_list_header_context_menu.exec(self.file_list.viewport().mapToGlobal(pos))
+            return
+
+        selected_files = self._get_selected_files()
+        menu = QMenu(self)
+
+        tag_all_action = QAction('Tag all', self)
+        tag_all_action.setEnabled(bool(selected_files))
+        tag_all_submenu = QMenu(self)
+        tag_all_action.setMenu(tag_all_submenu)
+        for tag in sorted(self.tag_list_model.tag_names):
+            tag_action = QAction(tag, self)
+            tag_action.triggered.connect(lambda checked=False, tag=tag: self._apply_tag_to_selected_files(tag, True))
+            tag_all_submenu.addAction(tag_action)
+        menu.addAction(tag_all_action)
+
+        untag_all_action = QAction('Untag all', self)
+        untag_all_action.setEnabled(bool(selected_files))
+        untag_all_submenu = QMenu(self)
+        untag_all_action.setMenu(untag_all_submenu)
+        for tag in sorted(self.get_available_tags_for_files(selected_files)):
+            tag_action = QAction(tag, self)
+            tag_action.triggered.connect(lambda checked=False, tag=tag: self._apply_tag_to_selected_files(tag, False))
+            untag_all_submenu.addAction(tag_action)
+        menu.addAction(untag_all_action)
+
+        menu.addSeparator()
+
+        rate_all_action = QAction('Rate all', self)
+        rate_all_action.setEnabled(bool(selected_files))
+        rate_all_submenu = QMenu(self)
+        rate_all_action.setMenu(rate_all_submenu)
+        for rating in [None, 1, 2, 3, 4, 5]:
+            label = 'Clear' if rating is None else f'{rating} star' + ('' if rating == 1 else 's')
+            rating_action = QAction(label, self)
+            rating_action.triggered.connect(lambda checked=False, rating=rating: self._apply_rating_to_selected_files(rating))
+            rate_all_submenu.addAction(rating_action)
+        menu.addAction(rate_all_action)
+
+        menu.exec(self.file_list.viewport().mapToGlobal(pos))
 
     def toggle_column_visibility(self, column, visible):
         self.file_list.setColumnHidden(column, not visible)
