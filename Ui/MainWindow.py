@@ -1,5 +1,6 @@
 import os
 import sys
+import gzip
 from datetime import datetime
 from pathlib import Path
 
@@ -561,7 +562,7 @@ class MainWindow(QMainWindow):
         data = {'Files': self.file_list_model.files, 'Settings': self.database.get_settings()}
 
         Path('.backup').mkdir(exist_ok=True)
-        with open(f'.backup/{datetime.now().isoformat()}.json', 'w', encoding='utf-8') as f:
+        with gzip.open(f'.backup/{datetime.now().isoformat()}.json.gz', 'wt', encoding='utf-8') as f:
             f.write(jsonpickle.encode(data, unpicklable=False, indent=4))
 
     def update_file_list_status(self):
