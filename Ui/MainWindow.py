@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.file_list)
 
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
+        self.file_list.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
         self.file_list.doubleClicked.connect(self.play_selected_file)
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
@@ -266,9 +267,9 @@ class MainWindow(QMainWindow):
         self.tag_list.sortByColumn(1, Qt.SortOrder.AscendingOrder)
 
         self.tag_list_model.tag_set.connect(self.database.set_tag)
-        self.tag_list_model.tag_set.connect(self._emit_selected_file_modified)
+        self.tag_list_model.tag_set.connect(self._on_tag_set)
         self.tag_list_model.tag_removed.connect(self.database.remove_tag)
-        self.tag_list_model.tag_removed.connect(self._emit_selected_file_modified)
+        self.tag_list_model.tag_removed.connect(self._on_tag_removed)
 
     def show_tag_list_context_menu(self, pos):
         index = self.tag_list.indexAt(pos)
@@ -368,8 +369,22 @@ class MainWindow(QMainWindow):
                 self.file_list_model.on_file_modified(file)
 
         if modified:
-            self.tag_list_model.current_file = self.selected_file
+            self.tag_list_model.set_selected_files(selected_files)
             self._emit_selected_file_modified()
+
+    def _on_tag_set(self, file_id: int, _tag: str):
+        self._on_tag_changed(file_id)
+
+    def _on_tag_removed(self, file_id: int, _tag: str):
+        self._on_tag_changed(file_id)
+
+    def _on_tag_changed(self, file_id: int):
+        for file in self.file_list_model.files:
+            if file.id == file_id:
+                self.file_list_model.on_file_modified(file)
+                if file is self.selected_file:
+                    self._emit_selected_file_modified()
+                return
 
     def rename_tag(self, old_name: str):
         new_name, ok = QInputDialog.getText(self, 'Rename Tag', 'New tag name:', text=old_name)
@@ -402,6 +417,9 @@ class MainWindow(QMainWindow):
         else:
             self.set_selected_file(None)
 
+    def on_file_selection_changed(self, _, __):
+        self.tag_list_model.set_selected_files(self._get_selected_files())
+
     def play_selected_file(self):
         self.playing_file = self.selected_file
         self.playing_file_changed.emit(self.playing_file)
@@ -414,9 +432,15 @@ class MainWindow(QMainWindow):
         self.vlc.update_status()
 
     def set_rating(self, rating):
-        if self.selected_file is not None:
-            self.database.set_rating(self.selected_file.id, rating)
-            self.selected_file.rating = rating
+        selected_files = self._get_selected_files()
+        if not selected_files and self.selected_file is not None:
+            selected_files = [self.selected_file]
+        for file in selected_files:
+            self.database.set_rating(file.id, rating)
+            file.rating = rating
+            self.file_list_model.on_file_modified(file)
+
+        if self.selected_file is not None and self.selected_file in selected_files:
             self._emit_selected_file_modified()
 
     def _emit_selected_file_modified(self):
@@ -549,7 +573,9 @@ class MainWindow(QMainWindow):
             if file is not None:
                 self.file_path_text.setText(file.path)
                 self.tag_list_model.current_file = file
-                self.rating_widget.rating = file.rating
+                selected_files = self._get_selected_files()
+                ratings = {selected_file.rating for selected_file in selected_files}
+                self.rating_widget.rating = file.rating if len(ratings) <= 1 else None
                 self.tag_list.setEnabled(True)
                 self.add_tag_edit.setEnabled(True)
                 self.rating_widget.setEnabled(True)

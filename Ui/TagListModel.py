@@ -17,6 +17,7 @@ class TagListModel(QAbstractTableModel):
         self.checked_tags = set()
         self.copied_tags = set()
         self._current_file: VideoFile | None = None
+        self._selected_files: list[VideoFile] = []
         self._max_count = max(tags.values(), default=0)
 
     def rowCount(self, parent=QModelIndex()):
@@ -35,7 +36,12 @@ class TagListModel(QAbstractTableModel):
             elif index.column() == 2:
                 return self.tags[tag_name]
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
-            return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
+            selected_count = sum(tag_name in file.tags for file in self._selected_files)
+            if selected_count == len(self._selected_files) and selected_count > 0:
+                return Qt.CheckState.Checked
+            if selected_count > 0:
+                return Qt.CheckState.PartiallyChecked
+            return Qt.CheckState.Unchecked
         elif role == Qt.ItemDataRole.BackgroundRole and tag_name in self.copied_tags:
             return QColor(18, 64, 18)
         elif role == Qt.ItemDataRole.ForegroundRole:
@@ -57,13 +63,17 @@ class TagListModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
             tag_name = self.tag_names[index.row()]
             if value == Qt.CheckState.Checked.value:
-                self.checked_tags.add(tag_name)
-                self.tags[tag_name] += 1
-                self.tag_set.emit(self.current_file.id, tag_name)
+                for file in self._selected_files:
+                    if tag_name not in file.tags:
+                        file.tags.add(tag_name)
+                        self.tags[tag_name] += 1
+                        self.tag_set.emit(file.id, tag_name)
             else:
-                self.checked_tags.remove(tag_name)
-                self.tags[tag_name] -= 1
-                self.tag_removed.emit(self.current_file.id, tag_name)
+                for file in self._selected_files:
+                    if tag_name in file.tags:
+                        file.tags.remove(tag_name)
+                        self.tags[tag_name] -= 1
+                        self.tag_removed.emit(file.id, tag_name)
             if self.tags[tag_name] > self._max_count:
                 self._max_count = self.tags[tag_name]
             self.dataChanged.emit(index, index.sibling(index.row(), self.columnCount() - 1))
@@ -99,9 +109,12 @@ class TagListModel(QAbstractTableModel):
 
     @current_file.setter
     def current_file(self, file: VideoFile | None):
-        if file is not None:
-            self.checked_tags = file.tags
         self._current_file = file
+        self.set_selected_files([file] if file is not None else [])
+
+    def set_selected_files(self, files: list[VideoFile]):
+        self._selected_files = files
+        self.checked_tags = set.intersection(*(file.tags for file in files)) if files else set()
         self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
 
     def set_current_file(self, file: VideoFile | None):
