@@ -319,32 +319,57 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
 
-        
-
         menu.exec(self.tag_list.viewport().mapToGlobal(pos))
 
     def copy_tags(self):
-        self.copied_tags = set(self.selected_file.tags) if self.selected_file is not None else set()
+        selected_files = self._get_selected_files()
+        if not selected_files and self.selected_file is not None:
+            selected_files = [self.selected_file]
+        self.copied_tags = {tag for file in selected_files for tag in file.tags}
         self.tag_list_model.set_copied_tags(self.copied_tags)
         self.paste_tags_action.setEnabled(bool(self.copied_tags) and self.selected_file is not None)
 
     def paste_tags(self):
-        if self.selected_file is None:
+        selected_files = self._get_selected_files()
+        if not selected_files and self.selected_file is not None:
+            selected_files = [self.selected_file]
+        if not selected_files:
             return
-        tags_to_add = self.copied_tags - self.selected_file.tags
-        for tag in tags_to_add:
-            self.tag_list_model.set_tag(tag)
-            self.database.set_tag(self.selected_file.id, tag)
-        if tags_to_add:
+
+        modified = False
+        for file in selected_files:
+            for tag in self.copied_tags - file.tags:
+                self.database.set_tag(file.id, tag)
+                file.tags.add(tag)
+                self.tag_list_model.tags[tag] += 1
+                modified = True
+            if modified:
+                self.file_list_model.on_file_modified(file)
+
+        if modified:
+            self.tag_list_model.dataChanged.emit(self.tag_list_model.index(0, 0),
+                                                 self.tag_list_model.index(self.tag_list_model.rowCount() - 1,
+                                                                           self.tag_list_model.columnCount() - 1))
             self._emit_selected_file_modified()
 
     def clear_tags(self):
-        if self.selected_file is None:
+        selected_files = self._get_selected_files()
+        if not selected_files:
             return
-        for row, tag in enumerate(self.tag_list_model.tag_names):
-            if tag in self.selected_file.tags:
-                self.tag_list_model.setData(self.tag_list_model.index(row, 0), Qt.CheckState.Unchecked.value,
-                                            Qt.ItemDataRole.CheckStateRole)
+
+        modified = False
+        for file in selected_files:
+            for tag in file.tags.copy():
+                self.database.remove_tag(file.id, tag)
+                file.tags.remove(tag)
+                self.tag_list_model.tags[tag] -= 1
+                modified = True
+            if modified:
+                self.file_list_model.on_file_modified(file)
+
+        if modified:
+            self.tag_list_model.current_file = self.selected_file
+            self._emit_selected_file_modified()
 
     def rename_tag(self, old_name: str):
         new_name, ok = QInputDialog.getText(self, 'Rename Tag', 'New tag name:', text=old_name)
@@ -479,6 +504,23 @@ class MainWindow(QMainWindow):
             rating_action.triggered.connect(lambda checked=False, rating=rating: self._apply_rating_to_selected_files(rating))
             rate_all_submenu.addAction(rating_action)
         menu.addAction(rate_all_action)
+
+        menu.addSeparator()
+
+        copy_tags_action = QAction('Copy Tags', self)
+        copy_tags_action.setEnabled(bool(selected_files))
+        copy_tags_action.triggered.connect(self.copy_tags)
+        menu.addAction(copy_tags_action)
+
+        paste_tags_action = QAction('Paste Tags', self)
+        paste_tags_action.setEnabled(bool(selected_files) and bool(self.copied_tags))
+        paste_tags_action.triggered.connect(self.paste_tags)
+        menu.addAction(paste_tags_action)
+
+        clear_tags_action = QAction('Clear Tags', self)
+        clear_tags_action.setEnabled(any(file.tags for file in selected_files))
+        clear_tags_action.triggered.connect(self.clear_tags)
+        menu.addAction(clear_tags_action)
 
         menu.exec(self.file_list.viewport().mapToGlobal(pos))
 
