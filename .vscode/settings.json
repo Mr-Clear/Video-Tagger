@@ -1,0 +1,4 @@
+{
+  "pylint.enabled": false,
+  "python.analysis.typeCheckingMode": "off"
+}
