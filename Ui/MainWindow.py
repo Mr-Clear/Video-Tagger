@@ -20,6 +20,7 @@ from Ui.TagListModel import TagListModel
 from Ui.FileSortFilterProxyModel import FileSortFilterProxyModel
 from Ui.StarRatingWidget import StarRatingWidget
 from Ui.FileListModel import FileListModel
+from Ui.FileDetailsDialog import FileDetailsDialog
 from VlcPlayerConnector import VlcPlayerConnector
 
 
@@ -549,7 +550,18 @@ class MainWindow(QMainWindow):
         clear_tags_action.triggered.connect(self.clear_tags)
         menu.addAction(clear_tags_action)
 
+        menu.addSeparator()
+
+        file_details_action = QAction('File details...', self)
+        file_details_action.setEnabled(len(selected_files) == 1)
+        file_details_action.triggered.connect(lambda: self.show_file_details(selected_files[0]))
+        menu.addAction(file_details_action)
+
         menu.exec(self.file_list.viewport().mapToGlobal(pos))
+
+    def show_file_details(self, file: VideoFile):
+        dialog = FileDetailsDialog(file.path, self)
+        dialog.exec()
 
     def toggle_column_visibility(self, column, visible):
         self.file_list.setColumnHidden(column, not visible)
