@@ -13,6 +13,7 @@ class Database:
         self.settings_loaded = False
 
         self.conn = sqlite3.connect(db_path)
+        self.conn.execute("PRAGMA synchronous = OFF")
         self.cursor = self.conn.cursor()
 
         self.create_tables()
