@@ -15,6 +15,7 @@ class TagListModel(QAbstractTableModel):
         self.tags = tags
         self.tag_names = list(tags.keys())
         self.checked_tags = set()
+        self.copied_tags = set()
         self._current_file: VideoFile | None = None
         self._max_count = max(tags.values(), default=0)
 
@@ -35,6 +36,8 @@ class TagListModel(QAbstractTableModel):
                 return self.tags[tag_name]
         elif role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:
             return Qt.CheckState.Checked if tag_name in self.checked_tags else Qt.CheckState.Unchecked
+        elif role == Qt.ItemDataRole.BackgroundRole and tag_name in self.copied_tags:
+            return QColor(18, 64, 18)
         elif role == Qt.ItemDataRole.ForegroundRole:
             linear = self.tags[tag_name] / self._max_count
             root2 = linear ** 0.5
@@ -43,6 +46,12 @@ class TagListModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.UserRole:
             return tag_name, self.tags[tag_name] if tag_name in self.tags else 0
         return None
+
+    def set_copied_tags(self, tags: set[str]):
+        self.copied_tags = set(tags)
+        if self.rowCount() > 0:
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1),
+                                  [Qt.ItemDataRole.BackgroundRole])
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if role == Qt.ItemDataRole.CheckStateRole and index.column() == 0:

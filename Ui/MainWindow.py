@@ -30,6 +30,7 @@ class MainWindow(QMainWindow):
 
         self.selected_file: VideoFile | None = None
         self.playing_file: VideoFile | None = None
+        self.copied_tags: set[str] = set()
 
         self.setWindowTitle("Video Tagger")
         self.setGeometry(100, 100, 800, 600)
@@ -144,6 +145,18 @@ class MainWindow(QMainWindow):
         self.load_tags()
         self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self.show_tag_list_context_menu)
+
+        self.copy_tags_action = QAction('Copy Tags', self)
+        self.copy_tags_action.setShortcut('Ctrl+C')
+        self.copy_tags_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.copy_tags_action.triggered.connect(self.copy_tags)
+        self.addAction(self.copy_tags_action)
+
+        self.paste_tags_action = QAction('Paste Tags', self)
+        self.paste_tags_action.setShortcut('Ctrl+V')
+        self.paste_tags_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.paste_tags_action.triggered.connect(self.paste_tags)
+        self.addAction(self.paste_tags_action)
 
         self.add_tag_layout = QHBoxLayout()
         self.right_layout.addLayout(self.add_tag_layout)
@@ -290,7 +303,48 @@ class MainWindow(QMainWindow):
         delete_action.triggered.connect(lambda: self.delete_tag_question(tag_name))
         menu.addAction(delete_action)
 
+        menu.addSeparator()
+
+        copy_tags_action = menu.addAction('Copy Tags')
+        copy_tags_action.setEnabled(self.selected_file is not None)
+        copy_tags_action.triggered.connect(self.copy_tags)
+
+        paste_tags_action = menu.addAction('Paste Tags')
+        paste_tags_action.setEnabled(self.selected_file is not None and bool(self.copied_tags))
+        paste_tags_action.triggered.connect(self.paste_tags)
+
+        clear_tags_action = menu.addAction('Clear Tags')
+        clear_tags_action.setEnabled(self.selected_file is not None and bool(self.selected_file.tags))
+        clear_tags_action.triggered.connect(self.clear_tags)
+
+        menu.addSeparator()
+
+        
+
         menu.exec(self.tag_list.viewport().mapToGlobal(pos))
+
+    def copy_tags(self):
+        self.copied_tags = set(self.selected_file.tags) if self.selected_file is not None else set()
+        self.tag_list_model.set_copied_tags(self.copied_tags)
+        self.paste_tags_action.setEnabled(bool(self.copied_tags) and self.selected_file is not None)
+
+    def paste_tags(self):
+        if self.selected_file is None:
+            return
+        tags_to_add = self.copied_tags - self.selected_file.tags
+        for tag in tags_to_add:
+            self.tag_list_model.set_tag(tag)
+            self.database.set_tag(self.selected_file.id, tag)
+        if tags_to_add:
+            self._emit_selected_file_modified()
+
+    def clear_tags(self):
+        if self.selected_file is None:
+            return
+        for row, tag in enumerate(self.tag_list_model.tag_names):
+            if tag in self.selected_file.tags:
+                self.tag_list_model.setData(self.tag_list_model.index(row, 0), Qt.CheckState.Unchecked.value,
+                                            Qt.ItemDataRole.CheckStateRole)
 
     def rename_tag(self, old_name: str):
         new_name, ok = QInputDialog.getText(self, 'Rename Tag', 'New tag name:', text=old_name)
