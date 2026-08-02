@@ -1,6 +1,8 @@
 import os
 import sys
+import copy
 import gzip
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -48,7 +50,7 @@ class MainWindow(QMainWindow):
 
         self._init_ui()
 
-        self.load_files()
+        QTimer.singleShot(0, self.load_files)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_vlc_status)
@@ -559,10 +561,17 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def backup_database(self):
-        data = {'Files': self.file_list_model.files, 'Settings': self.database.get_settings()}
+        data = {
+            'Files': copy.deepcopy(self.file_list_model.files),
+            'Settings': dict(self.database.get_settings()),
+        }
+        backup_path = Path('.backup') / f'{datetime.now().isoformat()}.json.gz'
+        threading.Thread(target=self._write_backup, args=(data, backup_path), daemon=True).start()
 
+    @staticmethod
+    def _write_backup(data, backup_path: Path):
         Path('.backup').mkdir(exist_ok=True)
-        with gzip.open(f'.backup/{datetime.now().isoformat()}.json.gz', 'wt', encoding='utf-8') as f:
+        with gzip.open(backup_path, 'wt', encoding='utf-8') as f:
             f.write(jsonpickle.encode(data, unpicklable=False, indent=4))
 
     def update_file_list_status(self):
