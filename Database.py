@@ -140,6 +140,10 @@ class Database:
         self.cursor.execute('UPDATE files SET duration = ? WHERE id = ?', (duration, file_id))
         self.conn.commit()
 
+    def set_size(self, file_id: int, size: int):
+        self.cursor.execute('UPDATE files SET size = ? WHERE id = ?', (size, file_id))
+        self.conn.commit()
+
     def remove_file(self, file_id: int):
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ?', (file_id,))
         self.cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))

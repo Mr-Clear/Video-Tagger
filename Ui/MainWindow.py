@@ -1,26 +1,30 @@
-import os
-import sys
 import copy
 import gzip
+import os
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import QTimer, Qt, QSortFilterProxyModel, QModelIndex, Signal, QRegularExpression
+from PySide6.QtCore import (QModelIndex, QRegularExpression,
+                            QSortFilterProxyModel, Qt, QTimer, Signal)
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableView, QMenu, QPushButton, \
-    QLineEdit, QDialog, QHeaderView, QInputDialog, QLabel, QSizePolicy, QMessageBox
+from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow,
+                               QMenu, QMessageBox, QPushButton, QSizePolicy,
+                               QTableView, QVBoxLayout, QWidget)
 
 from Database import Database
-from VideoFile import VideoFile
 from Ui.AddFilesDialog import AddFilesDialog
-from Ui.FilterWidget import FilterWidget
-from Ui.TagListModel import TagListModel
-from Ui.FileSortFilterProxyModel import FileSortFilterProxyModel
-from Ui.StarRatingWidget import StarRatingWidget
-from Ui.FileListModel import FileListModel
 from Ui.FileDetailsDialog import FileDetailsDialog
+from Ui.FileListModel import FileListModel
+from Ui.FileSortFilterProxyModel import FileSortFilterProxyModel
+from Ui.FilterWidget import FilterWidget
+from Ui.ProgressDialog import ProgressDialog
+from Ui.StarRatingWidget import StarRatingWidget
+from Ui.TagListModel import TagListModel
+from VideoFile import VideoFile
 from VlcPlayerConnector import VlcPlayerConnector
 
 
@@ -132,6 +136,11 @@ class MainWindow(QMainWindow):
         self.database_layout.addWidget(self.file_list_status_label)
         self.file_list_status_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
 
+        self.database_layout.addStretch()
+        self.verify_files_button = QPushButton("Verify Files")
+        self.verify_files_button.clicked.connect(self.verify_files)
+        self.database_layout.addWidget(self.verify_files_button)
+
         self.add_files_button = QPushButton("Add Files")
         self.add_files_button.clicked.connect(self.show_add_files_dialog)
         self.database_layout.addWidget(self.add_files_button)
@@ -199,6 +208,29 @@ class MainWindow(QMainWindow):
                 self.vlc.set_volume_relative(-1)
 
         return super().eventFilter(obj, event)
+
+    def verify_files(self):
+        count = self.file_list_filter_model.rowCount()
+        progress_dialog = ProgressDialog("Verifying Files", count, self)
+        progress_dialog.show()
+
+        for row in range(count):
+            index = self.file_list_filter_model.index(row, 0)
+            file = index.data(Qt.ItemDataRole.DisplayRole.UserRole)
+            if progress_dialog.set_progress(row + 1, file.path):
+                progress_dialog.set_end(True)
+                return
+            if file is not None:
+                if not os.path.exists(file.path):
+                    self.database.set_size(file.id, -1)
+                    file.size = -1
+                    self.file_list_model.on_file_modified(file)
+                else:
+                    size = os.path.getsize(file.path)
+                    self.database.set_size(file.id, size)
+                    file.size = size
+                    self.file_list_model.on_file_modified(file)
+        progress_dialog.set_end(False)
 
     def show_add_files_dialog(self):
         dialog = AddFilesDialog(self.database, self)
