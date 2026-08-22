@@ -10,9 +10,9 @@ import jsonpickle
 from PySide6.QtCore import (QModelIndex, QRegularExpression,
                             QSortFilterProxyModel, Qt, QTimer, Signal)
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
-from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QHeaderView,
-                               QInputDialog, QLabel, QLineEdit, QMainWindow,
-                               QMenu, QMessageBox, QPushButton, QSizePolicy,
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
+                               QHeaderView, QInputDialog, QLabel, QLineEdit,
+                               QMainWindow, QMenu, QMessageBox, QPushButton,
                                QTableView, QVBoxLayout, QWidget)
 
 from Database import Database
@@ -134,7 +134,6 @@ class MainWindow(QMainWindow):
 
         self.file_list_status_label = QLabel()
         self.database_layout.addWidget(self.file_list_status_label)
-        self.file_list_status_label.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed))
 
         self.database_layout.addStretch()
         self.verify_files_button = QPushButton("Verify Files")
@@ -144,6 +143,10 @@ class MainWindow(QMainWindow):
         self.add_files_button = QPushButton("Add Files")
         self.add_files_button.clicked.connect(self.show_add_files_dialog)
         self.database_layout.addWidget(self.add_files_button)
+
+        self.export_button = QPushButton("Export File List")
+        self.export_button.clicked.connect(self.export_file_list)
+        self.database_layout.addWidget(self.export_button)
 
         self.right_layout = QVBoxLayout()
         self.main_layout.addLayout(self.right_layout)
@@ -227,9 +230,10 @@ class MainWindow(QMainWindow):
                     self.file_list_model.on_file_modified(file)
                 else:
                     size = os.path.getsize(file.path)
-                    self.database.set_size(file.id, size)
-                    file.size = size
-                    self.file_list_model.on_file_modified(file)
+                    if size != file.size:
+                        self.database.set_size(file.id, size)
+                        file.size = size
+                        self.file_list_model.on_file_modified(file)
         progress_dialog.set_end(False)
 
     def show_add_files_dialog(self):
@@ -244,6 +248,23 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(e)
             self.load_files()
+
+    def export_file_list(self):
+        files = []
+        if self.file_list.selectionModel().hasSelection():
+            selected_indexes = self.file_list.selectionModel().selectedRows()
+            files = [index.data(Qt.ItemDataRole.DisplayRole.UserRole) for index in selected_indexes]
+        else:
+            files = [self.file_list_filter_model.index(i, 0).data(Qt.ItemDataRole.DisplayRole.UserRole) for i in range(self.file_list_filter_model.rowCount())]
+        if not files:
+            QMessageBox.warning(self, "No Files", "There are no files to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export File List")
+        if file_path:
+            with open(file_path, 'w') as f:
+                for file in files:
+                    f.write(f"{file.path}\n")
 
     def add_tag(self):
         tag = self.add_tag_edit.text()
