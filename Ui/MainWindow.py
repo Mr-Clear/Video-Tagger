@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         self.selected_file_changed.connect(self.file_list_filter_model.set_selected_file)
         self.selected_file_modified.connect(self.file_list_model.on_file_modified)
         self.playing_file_changed.connect(self.file_list_model.set_playing_file)
+        self.file_list_model.duration_loaded.connect(self.on_duration_loaded)
         self.file_list.setModel(self.file_list_filter_model)
         self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -96,12 +97,15 @@ class MainWindow(QMainWindow):
         self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.filter_widget.filter_changed.connect(self.file_list_filter_model.set_filter)
+        self.filter_widget.filter_changed.connect(self.prioritize_visible_durations)
 
         self.left_layout.addWidget(self.file_list)
 
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selected)
         self.file_list.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
         self.file_list.doubleClicked.connect(self.play_selected_file)
+        self.file_list.verticalScrollBar().valueChanged.connect(self.prioritize_visible_durations)
+        self.file_list.verticalScrollBar().sliderMoved.connect(self.prioritize_visible_durations)
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self.show_file_list_context_menu)
 
@@ -227,6 +231,7 @@ class MainWindow(QMainWindow):
         files = self.database.get_files()
 
         self.file_list_model.set_files(files)
+        QTimer.singleShot(0, self.start_duration_loading)
 
         if files:
             common_path = os.path.commonpath([file.path for file in files])
@@ -255,6 +260,29 @@ class MainWindow(QMainWindow):
             self.filter_widget.date = (datetime.min, datetime.max)
 
         self.backup_database()
+
+    def start_duration_loading(self):
+        self.prioritize_visible_durations()
+        self.file_list_model.queue_remaining_durations()
+
+    def prioritize_visible_durations(self):
+        visible_files = []
+        first_row = max(self.file_list.rowAt(0), 0)
+        last_row = self.file_list.rowAt(self.file_list.viewport().height() - 1)
+        if last_row < 0:
+            last_row = self.file_list_filter_model.rowCount() - 1
+        for row in range(first_row, last_row + 1):
+            source_index = self.file_list_filter_model.mapToSource(
+                self.file_list_filter_model.index(row, 0))
+            visible_files.append(source_index.data(Qt.ItemDataRole.UserRole))
+        self.file_list_model.request_visible_durations([file for file in visible_files if file is not None])
+
+    def on_duration_loaded(self, file: VideoFile):
+        if file.duration is not None:
+            print(f"Duration loaded for {file.path}: {file.duration} seconds")
+            self.database.set_duration(file.id, file.duration)
+        if self.file_list_filter_model.sortColumn() == 5:
+            self.file_list_filter_model.sort(5, self.file_list_filter_model.sortOrder())
 
     def load_tags(self):
         tags = self.database.get_tags()

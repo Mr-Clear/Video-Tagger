@@ -53,6 +53,10 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
         if self.sortColumn() == 4:  # Modified column
             return left_file.date_modified < right_file.date_modified
         if self.sortColumn() == 5:  # Duration column
+            if left_file.duration is None:
+                return False
+            if right_file.duration is None:
+                return True
             return left_file.duration < right_file.duration
 
     def filterAcceptsRow(self, source_row, source_parent):
