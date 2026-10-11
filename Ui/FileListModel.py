@@ -42,7 +42,7 @@ class FileListModel(QAbstractTableModel):
     def __init__(self, files: List[VideoFile]):
         super().__init__()
         self.files = files
-        self.horizontal_header_labels = ['Name', 'Rating', 'Tags', 'Size', 'Modified', 'Duration']
+        self.horizontal_header_labels = ['Name', 'Rating', 'Tags', 'Size', 'Modified', 'Duration', 'Bitrate']
         self._current_playing: VideoFile | None = None
         self._duration_pool = QThreadPool(self)
         self._duration_pool.setMaxThreadCount(1)
@@ -80,7 +80,13 @@ class FileListModel(QAbstractTableModel):
                 if file_object.path in self._duration_running:
                     return 'Reading...'
                 return ''
-        elif role == Qt.ItemDataRole.FontRole:
+            elif index.column() == 6:
+                bitrate = file_object.bitrate
+                if bitrate is None:
+                    return ''
+                if bitrate >= 1_000_000:
+                    return f'{bitrate / 1_000_000:.2f} Mb/s'
+                return f'{bitrate / 1_000:.0f} kb/s'
             if file_object == self._current_playing:
                 font = QFont()
                 font.setBold(True)
@@ -100,6 +106,18 @@ class FileListModel(QAbstractTableModel):
         self.beginResetModel()
         self.files = files
         self.endResetModel()
+
+    def add_file(self, file: VideoFile):
+        row = len(self.files)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self.files.append(file)
+        self.endInsertRows()
+
+    def remove_file(self, file: VideoFile):
+        row = self.files.index(file)
+        self.beginRemoveRows(QModelIndex(), row, row)
+        self.files.pop(row)
+        self.endRemoveRows()
 
     def request_visible_durations(self, files: list[VideoFile]):
         self._visible_paths = {file.path for file in files}
@@ -139,7 +157,7 @@ class FileListModel(QAbstractTableModel):
         file = next((file for file in self.files if file.path == file_path), None)
         if file is not None:
             row = self.files.index(file)
-            self.dataChanged.emit(self.index(row, 5), self.index(row, 5), [Qt.ItemDataRole.DisplayRole])
+            self.dataChanged.emit(self.index(row, 5), self.index(row, 6), [Qt.ItemDataRole.DisplayRole])
 
     @Slot(str, object)
     def _on_duration_loaded(self, file_path: str, duration: float | None):

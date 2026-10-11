@@ -58,6 +58,12 @@ class FileSortFilterProxyModel(QSortFilterProxyModel):
             if right_file.duration is None:
                 return True
             return left_file.duration < right_file.duration
+        if self.sortColumn() == 6:  # Bitrate column
+            if left_file.bitrate is None:
+                return False
+            if right_file.bitrate is None:
+                return True
+            return left_file.bitrate < right_file.bitrate
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()

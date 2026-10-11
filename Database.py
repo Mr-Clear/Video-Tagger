@@ -144,6 +144,12 @@ class Database:
         self.cursor.execute('UPDATE files SET size = ? WHERE id = ?', (size, file_id))
         self.conn.commit()
 
+    def update_file_location(self, file_id: int, path: str, size: int, date_modified: datetime,
+                             duration: float | None):
+        self.cursor.execute('UPDATE files SET path = ?, size = ?, date_modified = ?, duration = ? WHERE id = ?',
+                            (path, size, date_modified.isoformat(), duration, file_id))
+        self.conn.commit()
+
     def remove_file(self, file_id: int):
         self.cursor.execute('DELETE FROM file_has_tag WHERE file_id = ?', (file_id,))
         self.cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))

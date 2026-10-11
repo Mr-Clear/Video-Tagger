@@ -14,6 +14,13 @@ class VideoFile:
     tags: set[str] = field(default_factory=set)
 
     @property
+    def bitrate(self) -> float | None:
+        """Average bits per second, or None if size or duration is unknown."""
+        if self.duration and self.duration > 0 and self.size >= 0:
+            return self.size * 8 / self.duration
+        return None
+
+    @property
     def name(self):
         return os.path.basename(self.path)
 

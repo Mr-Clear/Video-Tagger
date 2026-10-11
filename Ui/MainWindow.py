@@ -1,13 +1,14 @@
 import copy
 import gzip
 import os
+import re
 import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import (QModelIndex, QRegularExpression,
+from PySide6.QtCore import (QFile, QModelIndex, QRegularExpression,
                             QSortFilterProxyModel, Qt, QTimer, Signal)
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
 
 from Database import Database
 from Ui.AddFilesDialog import AddFilesDialog
+from Ui.CompressVideoDialog import CompressVideoDialog
 from Ui.FileDetailsDialog import FileDetailsDialog
 from Ui.FileListModel import FileListModel
 from Ui.FileSortFilterProxyModel import FileSortFilterProxyModel
@@ -64,6 +66,9 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
 
     def _init_ui(self):
+        self.compress_dialog = CompressVideoDialog(self)
+        self.compress_dialog.file_compressed.connect(self.on_file_compressed)
+
         self.central_widget = QWidget()
         self.main_layout = QHBoxLayout()
         self.central_widget.setLayout(self.main_layout)
@@ -236,6 +241,34 @@ class MainWindow(QMainWindow):
                         self.file_list_model.on_file_modified(file)
         progress_dialog.set_end(False)
 
+    def show_compress_dialog(self):
+        files = self._get_selected_files()
+        if not files and self.selected_file is not None:
+            files = [self.selected_file]
+        self.compress_dialog.set_files(files)
+        self.compress_dialog.show()
+        self.compress_dialog.raise_()
+        self.compress_dialog.activateWindow()
+
+    def on_file_compressed(self, file_path: str):
+        try:
+            size = os.path.getsize(file_path)
+            date_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+        except OSError:
+            return
+        file_id = self.database.add_file(VideoFile(-1, file_path, size, date_modified))
+        if file_id < 0:
+            return
+        self.file_list_model.add_file(self.database.get_file(file_id))
+        # Widen the size/date filter so the new file isn't hidden by the ranges computed at load time.
+        self.filter_widget.min_size = min(self.filter_widget.min_size, size)
+        self.filter_widget.max_size = max(self.filter_widget.max_size, size)
+        self.filter_widget.min_date = min(self.filter_widget.min_date, date_modified)
+        self.filter_widget.max_date = max(self.filter_widget.max_date, date_modified)
+        self.file_list_filter_model.sort(self.file_list_filter_model.sortColumn(),
+                                         self.file_list_filter_model.sortOrder())
+        self.file_list_model.queue_remaining_durations()
+
     def show_add_files_dialog(self):
         dialog = AddFilesDialog(self.database, self)
         dialog.exec()
@@ -334,8 +367,8 @@ class MainWindow(QMainWindow):
         if file.duration is not None:
             print(f"Duration loaded for {file.path}: {file.duration} seconds")
             self.database.set_duration(file.id, file.duration)
-        if self.file_list_filter_model.sortColumn() == 5:
-            self.file_list_filter_model.sort(5, self.file_list_filter_model.sortOrder())
+        if self.file_list_filter_model.sortColumn() in (5, 6):
+            self.file_list_filter_model.sort(self.file_list_filter_model.sortColumn(), self.file_list_filter_model.sortOrder())
 
     def load_tags(self):
         tags = self.database.get_tags()
@@ -638,7 +671,89 @@ class MainWindow(QMainWindow):
         file_details_action.triggered.connect(lambda: self.show_file_details(selected_files[0]))
         menu.addAction(file_details_action)
 
+        compress_action = QAction('Compress Video...', self)
+        compress_action.setEnabled(bool(selected_files))
+        compress_action.triggered.connect(self.show_compress_dialog)
+        menu.addAction(compress_action)
+
+        replace_original_action = QAction('Replace Original', self)
+        original = self._find_original(selected_files[0]) if len(selected_files) == 1 else None
+        replace_original_action.setEnabled(original is not None)
+        if original is not None:
+            replace_original_action.triggered.connect(lambda: self.replace_original(selected_files[0], original))
+        menu.addAction(replace_original_action)
+
+        delete_action = QAction('Delete', self)
+        delete_action.setEnabled(bool(selected_files))
+        delete_action.triggered.connect(lambda: self.delete_files(selected_files))
+        menu.addAction(delete_action)
+
         menu.exec(self.file_list.viewport().mapToGlobal(pos))
+
+    def delete_files(self, files: list[VideoFile]):
+        names = '\n'.join(file.name for file in files[:10])
+        if len(files) > 10:
+            names += f'\n... and {len(files) - 10} more'
+        answer = QMessageBox.question(
+            self, 'Delete', f'Move {len(files)} file(s) to the trash and remove them from the list?\n\n{names}',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        failed = []
+        for file in files:
+            # A file that is already gone from disk is still removed from the list.
+            if os.path.exists(file.path) and not QFile.moveToTrash(file.path):
+                failed.append(file.name)
+                continue
+            self.database.remove_file(file.id)
+            self.file_list_model.remove_file(file)
+        if failed:
+            QMessageBox.warning(self, 'Delete', 'Could not delete:\n' + '\n'.join(failed))
+
+    def _find_original(self, file: VideoFile) -> VideoFile | None:
+        match = re.fullmatch(r'(.*)_compressed(?:_\d+)?', file.name_prefix)
+        if match is None:
+            return None
+        directory = os.path.dirname(file.path)
+        return next((f for f in self.file_list_model.files
+                     if f is not file and os.path.dirname(f.path) == directory
+                     and f.name_prefix == match.group(1) and os.path.exists(f.path)), None)
+
+    def replace_original(self, compressed: VideoFile, original: VideoFile):
+        new_path = os.path.join(os.path.dirname(original.path), original.name_prefix + compressed.extension)
+        if new_path != original.path and os.path.exists(new_path):
+            QMessageBox.warning(self, 'Replace Original', f'{new_path} already exists.')
+            return
+        answer = QMessageBox.question(
+            self, 'Replace Original',
+            f'Delete "{original.name}" and move "{compressed.name}" to "{os.path.basename(new_path)}"?\n'
+            'Tags and rating of the original are kept.',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            os.replace(compressed.path, new_path)
+        except OSError as e:
+            QMessageBox.warning(self, 'Replace Original', str(e))
+            return
+        if new_path != original.path:
+            try:
+                os.remove(original.path)
+            except OSError as e:
+                QMessageBox.warning(self, 'Replace Original', f'Could not delete the original file: {e}')
+
+        size = os.path.getsize(new_path)
+        date_modified = datetime.fromtimestamp(os.path.getmtime(new_path))
+        self.database.remove_file(compressed.id)
+        self.database.update_file_location(original.id, new_path, size, date_modified, compressed.duration)
+        self.file_list_model.remove_file(compressed)
+        original.path, original.size, original.date_modified = new_path, size, date_modified
+        original.duration = compressed.duration
+        self.file_list_model.on_file_modified(original)
+        if self.selected_file is original:
+            self._emit_selected_file_modified()
 
     def show_file_details(self, file: VideoFile):
         dialog = FileDetailsDialog(file.path, self)
