@@ -8,13 +8,13 @@ from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import (QFile, QModelIndex, QRegularExpression,
+from PySide6.QtCore import (QByteArray, QFile, QModelIndex, QRegularExpression,
                             QSortFilterProxyModel, Qt, QTimer, Signal)
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QMainWindow, QMenu, QMessageBox, QPushButton,
-                               QTableView, QVBoxLayout, QWidget)
+                               QSplitter, QTableView, QVBoxLayout, QWidget)
 
 from Database import Database
 from Ui.AddFilesDialog import AddFilesDialog
@@ -74,8 +74,13 @@ class MainWindow(QMainWindow):
         self.central_widget.setLayout(self.main_layout)
         self.setCentralWidget(self.central_widget)
 
-        self.left_layout = QVBoxLayout()
-        self.main_layout.addLayout(self.left_layout)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_layout.addWidget(self.splitter)
+
+        left_widget = QWidget()
+        self.left_layout = QVBoxLayout(left_widget)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.splitter.addWidget(left_widget)
 
         self.filter_widget = FilterWidget(self.database.get_setting('filter_expanded', 'True') == 'True',
                                           'File List Filter', lambda: self.tag_list_model.tag_names, self)
@@ -100,10 +105,12 @@ class MainWindow(QMainWindow):
         self.file_list_model.duration_loaded.connect(self.on_duration_loaded)
         self.file_list.setModel(self.file_list_filter_model)
         self.file_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.file_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.file_list.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        # ResizeToContents sections are re-measured on every width change, which is very slow while dragging the
+        # splitter. Measure once (debounced) when the contents change instead.
+        self.file_columns_timer = self._create_fit_columns_timer(self.file_list, range(1, 7))
+        for signal in (self.file_list_model.modelReset, self.file_list_model.rowsInserted,
+                       self.file_list_model.rowsRemoved, self.file_list_model.dataChanged):
+            signal.connect(lambda *_: self.file_columns_timer.start())
         self.file_list.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.filter_widget.filter_changed.connect(self.file_list_filter_model.set_filter)
         self.filter_widget.filter_changed.connect(self.prioritize_visible_durations)
@@ -153,8 +160,24 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self.export_file_list)
         self.database_layout.addWidget(self.export_button)
 
-        self.right_layout = QVBoxLayout()
-        self.main_layout.addLayout(self.right_layout)
+        right_widget = QWidget()
+        self.right_layout = QVBoxLayout(right_widget)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.splitter.addWidget(right_widget)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setOpaqueResize(False)
+        splitter_state = self.database.get_setting('splitter_state')
+        if splitter_state:
+            self.splitter.restoreState(QByteArray.fromHex(splitter_state.encode()))
+        # Debounced so dragging doesn't write to the database on every move event.
+        self.splitter_save_timer = QTimer(self)
+        self.splitter_save_timer.setSingleShot(True)
+        self.splitter_save_timer.setInterval(500)
+        self.splitter_save_timer.timeout.connect(
+            lambda: self.database.set_setting('splitter_state', self.splitter.saveState().toHex().data().decode()))
+        self.splitter.splitterMoved.connect(lambda *_: self.splitter_save_timer.start())
 
         self.file_path_text = QLineEdit()
         self.file_path_text.setReadOnly(True)
@@ -198,6 +221,13 @@ class MainWindow(QMainWindow):
         self.rating_widget = StarRatingWidget(20, self)
         self.rating_widget.rating_changed.connect(self.set_rating)
         self.right_layout.addWidget(self.rating_widget)
+
+    def _create_fit_columns_timer(self, view: QTableView, columns) -> QTimer:
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(200)
+        timer.timeout.connect(lambda: [view.resizeColumnToContents(c) for c in columns])
+        return timer
 
     def eventFilter(self, obj, event):
         if not isinstance(obj, QWindow):
@@ -379,9 +409,12 @@ class MainWindow(QMainWindow):
         self.tag_list_filter_model.setSourceModel(self.tag_list_model)
         self.tag_list.setModel(self.tag_list_filter_model)
 
-        self.tag_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.tag_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tag_list.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tag_columns_timer = self._create_fit_columns_timer(self.tag_list, (0, 2))
+        for signal in (self.tag_list_model.modelReset, self.tag_list_model.rowsInserted,
+                       self.tag_list_model.rowsRemoved, self.tag_list_model.dataChanged):
+            signal.connect(lambda *_: self.tag_columns_timer.start())
+        self.tag_columns_timer.start()
         self.tag_list.sortByColumn(1, Qt.SortOrder.AscendingOrder)
 
         self.tag_list_model.tag_set.connect(self.database.set_tag)
