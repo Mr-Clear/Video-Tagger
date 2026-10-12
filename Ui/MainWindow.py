@@ -736,10 +736,9 @@ class MainWindow(QMainWindow):
         menu.addAction(compress_action)
 
         replace_original_action = QAction('Replace Original', self)
-        original = self._find_original(selected_files[0]) if len(selected_files) == 1 else None
-        replace_original_action.setEnabled(original is not None)
-        if original is not None:
-            replace_original_action.triggered.connect(lambda: self.replace_original(selected_files[0], original))
+        pairs = [(file, original) for file in selected_files if (original := self._find_original(file)) is not None]
+        replace_original_action.setEnabled(bool(pairs))
+        replace_original_action.triggered.connect(lambda: self.replace_originals(pairs))
         menu.addAction(replace_original_action)
 
         delete_action = QAction('Delete', self)
@@ -770,20 +769,22 @@ class MainWindow(QMainWindow):
         if failed:
             QMessageBox.warning(self, 'Delete', 'Could not delete:\n' + '\n'.join(failed))
 
-    def delete_compressed_output(self, file_path: str):
-        file = self.database.find_file(file_path)
-        if file is not None:
-            self.delete_files([file])
+    def delete_compressed_output(self, file_paths: list[str]):
+        files = [file for path in file_paths if (file := self.database.find_file(path)) is not None]
+        if files:
+            self.delete_files(files)
 
-    def replace_compressed_output(self, file_path: str):
-        compressed = self.database.find_file(file_path)
-        if compressed is None:
+    def replace_compressed_output(self, file_paths: list[str]):
+        pairs = []
+        for path in file_paths:
+            compressed = self.database.find_file(path)
+            original = self._find_original(compressed) if compressed is not None else None
+            if original is not None:
+                pairs.append((compressed, original))
+        if not pairs:
+            QMessageBox.warning(self, 'Replace Original', 'No original videos could be found.')
             return
-        original = self._find_original(compressed)
-        if original is None:
-            QMessageBox.warning(self, 'Replace Original', 'The original video could not be found.')
-            return
-        self.replace_original(compressed, original)
+        self.replace_originals(pairs)
 
     def _find_original(self, file: VideoFile) -> VideoFile | None:
         match = re.fullmatch(r'(.*)_compressed(?:_\d+)?', file.name_prefix)
@@ -794,40 +795,57 @@ class MainWindow(QMainWindow):
                      if f is not file and os.path.dirname(f.path) == directory
                      and f.name_prefix == match.group(1) and os.path.exists(f.path)), None)
 
-    def replace_original(self, compressed: VideoFile, original: VideoFile):
-        new_path = os.path.join(os.path.dirname(original.path), original.name_prefix + compressed.extension)
-        if new_path != original.path and os.path.exists(new_path):
-            QMessageBox.warning(self, 'Replace Original', f'{new_path} already exists.')
-            return
-        answer = QMessageBox.question(
-            self, 'Replace Original',
-            f'Delete "{original.name}" and move "{compressed.name}" to "{os.path.basename(new_path)}"?\n'
-            'Tags and rating of the original are kept.',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if answer != QMessageBox.StandardButton.Yes:
-            return
+    def replace_originals(self, pairs: list[tuple[VideoFile, VideoFile]]):
+        problems = []
+        todo = []
+        seen_originals = set()
+        for compressed, original in pairs:
+            new_path = os.path.join(os.path.dirname(original.path), original.name_prefix + compressed.extension)
+            if id(original) in seen_originals:
+                problems.append(f'{compressed.name}: another selected file already replaces {original.name}')
+            elif new_path != original.path and os.path.exists(new_path):
+                problems.append(f'{compressed.name}: {os.path.basename(new_path)} already exists')
+            else:
+                seen_originals.add(id(original))
+                todo.append((compressed, original, new_path))
 
-        try:
-            os.replace(compressed.path, new_path)
-        except OSError as e:
-            QMessageBox.warning(self, 'Replace Original', str(e))
-            return
-        if new_path != original.path:
+        if todo:
+            names = '\n'.join(f'{o.name}  <-  {c.name}' for c, o, _ in todo[:10])
+            if len(todo) > 10:
+                names += f'\n... and {len(todo) - 10} more'
+            answer = QMessageBox.question(
+                self, 'Replace Original',
+                f'Delete {len(todo)} original file(s) and replace them with the compressed versions?\n'
+                f'Tags and ratings of the originals are kept.\n\n{names}',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        for compressed, original, new_path in todo:
             try:
-                os.remove(original.path)
+                os.replace(compressed.path, new_path)
             except OSError as e:
-                QMessageBox.warning(self, 'Replace Original', f'Could not delete the original file: {e}')
+                problems.append(f'{compressed.name}: {e}')
+                continue
+            if new_path != original.path:
+                try:
+                    os.remove(original.path)
+                except OSError as e:
+                    problems.append(f'{original.name}: could not delete the original file: {e}')
 
-        size = os.path.getsize(new_path)
-        date_modified = datetime.fromtimestamp(os.path.getmtime(new_path))
-        self.database.remove_file(compressed.id)
-        self.database.update_file_location(original.id, new_path, size, date_modified, compressed.duration)
-        self.file_list_model.remove_file(compressed)
-        original.path, original.size, original.date_modified = new_path, size, date_modified
-        original.duration = compressed.duration
-        self.file_list_model.on_file_modified(original)
-        if self.selected_file is original:
-            self._emit_selected_file_modified()
+            size = os.path.getsize(new_path)
+            date_modified = datetime.fromtimestamp(os.path.getmtime(new_path))
+            self.database.remove_file(compressed.id)
+            self.database.update_file_location(original.id, new_path, size, date_modified, compressed.duration)
+            self.file_list_model.remove_file(compressed)
+            original.path, original.size, original.date_modified = new_path, size, date_modified
+            original.duration = compressed.duration
+            self.file_list_model.on_file_modified(original)
+            if self.selected_file is original:
+                self._emit_selected_file_modified()
+
+        if problems:
+            QMessageBox.warning(self, 'Replace Original', '\n'.join(problems))
 
     def show_file_details(self, file: VideoFile):
         dialog = FileDetailsDialog(file.path, self)

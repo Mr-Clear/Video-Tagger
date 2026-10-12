@@ -101,8 +101,8 @@ class CompressVideoDialog(QDialog):
     file_activated = Signal(str)
     compressed_output_activated = Signal(str)
     compressed_output_selected = Signal(str)
-    compressed_output_delete_requested = Signal(str)
-    compressed_output_replace_requested = Signal(str)
+    compressed_output_delete_requested = Signal(object)
+    compressed_output_replace_requested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -302,13 +302,14 @@ class CompressVideoDialog(QDialog):
         menu.addAction(select_action)
 
         delete_action = QAction('Delete Compressed', menu)
-        delete_action.setEnabled(output_exists)
-        delete_action.triggered.connect(lambda: self.compressed_output_delete_requested.emit(job.target))
+        outputs = [j.target for j in self._selected_jobs() if j.state == JobState.DONE and os.path.isfile(j.target)]
+        delete_action.setEnabled(bool(outputs))
+        delete_action.triggered.connect(lambda: self.compressed_output_delete_requested.emit(outputs))
         menu.addAction(delete_action)
 
         replace_action = QAction('Replace Original', menu)
-        replace_action.setEnabled(output_exists)
-        replace_action.triggered.connect(lambda: self.compressed_output_replace_requested.emit(job.target))
+        replace_action.setEnabled(bool(outputs))
+        replace_action.triggered.connect(lambda: self.compressed_output_replace_requested.emit(outputs))
         menu.addAction(replace_action)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
