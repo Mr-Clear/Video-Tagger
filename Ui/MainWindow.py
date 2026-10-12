@@ -13,7 +13,7 @@ from PySide6.QtCore import (QByteArray, QFile, QItemSelectionModel, QModelIndex,
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QMainWindow, QMenu, QMessageBox, QPushButton,
+                               QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
                                QSplitter, QTableView, QVBoxLayout, QWidget)
 
 from Database import Database
@@ -154,6 +154,23 @@ class MainWindow(QMainWindow):
         self.database_layout.addWidget(self.file_list_status_label)
 
         self.database_layout.addStretch()
+
+        self.compress_progress_widget = QWidget()
+        compress_progress_layout = QHBoxLayout(self.compress_progress_widget)
+        compress_progress_layout.setContentsMargins(0, 0, 0, 0)
+        self.compress_current_bar = QProgressBar()
+        self.compress_current_bar.setMinimumWidth(180)
+        self.compress_overall_bar = QProgressBar()
+        self.compress_overall_bar.setMinimumWidth(180)
+        self.show_compress_button = QPushButton("Compression...")
+        self.show_compress_button.clicked.connect(self.show_compress_window)
+        compress_progress_layout.addWidget(self.compress_current_bar)
+        compress_progress_layout.addWidget(self.compress_overall_bar)
+        compress_progress_layout.addWidget(self.show_compress_button)
+        self.compress_progress_widget.hide()
+        self.database_layout.addWidget(self.compress_progress_widget)
+        self.compress_dialog.progress_changed.connect(self.on_compress_progress)
+
         self.verify_files_button = QPushButton("Verify Files")
         self.verify_files_button.clicked.connect(self.verify_files)
         self.database_layout.addWidget(self.verify_files_button)
@@ -282,9 +299,20 @@ class MainWindow(QMainWindow):
         if not files and self.selected_file is not None:
             files = [self.selected_file]
         self.compress_dialog.set_files(files)
+        self.show_compress_window()
+
+    def show_compress_window(self):
         self.compress_dialog.show()
         self.compress_dialog.raise_()
         self.compress_dialog.activateWindow()
+
+    def on_compress_progress(self, active: bool, name: str, current: int, finished: int, total: int, overall: int):
+        self.compress_progress_widget.setVisible(active)
+        name = name if len(name) <= 30 else name[:29] + '…'
+        self.compress_current_bar.setFormat(f'{name} %p%')
+        self.compress_current_bar.setValue(current)
+        self.compress_overall_bar.setFormat(f'Overall {finished}/{total} (%p%)')
+        self.compress_overall_bar.setValue(overall)
 
     def on_file_compressed(self, source_path: str, file_path: str):
         try:

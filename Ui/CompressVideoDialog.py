@@ -97,6 +97,8 @@ class CompressVideoDialog(QDialog):
     """Non-modal dialog with a persistent queue; jobs run one at a time in the background."""
 
     file_compressed = Signal(str, str)
+    # active, current file name, current file percent, finished jobs, total jobs, overall percent
+    progress_changed = Signal(bool, str, int, int, int, int)
     file_selected = Signal(object)
     file_activated = Signal(str)
     compressed_output_activated = Signal(str)
@@ -107,10 +109,11 @@ class CompressVideoDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Compress Video')
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(1400, 800)
 
         self.jobs: list[CompressionJob] = []
         self.current_job: CompressionJob | None = None
+        self._batch: list[CompressionJob] = []
         self.process: QProcess | None = None
         self._stdout_buffer = ''
         self._stderr_tail = ''
@@ -392,9 +395,13 @@ class CompressVideoDialog(QDialog):
             self.audio_spin.value())
 
     def _on_compress_clicked(self):
+        # A new batch starts when nothing is queued or running.
+        if not any(j.state in (JobState.QUEUED, JobState.RUNNING) for j in self.jobs):
+            self._batch = []
         for job in self.jobs:
             if job.state == JobState.PENDING:
                 job.state = JobState.QUEUED
+                self._batch.append(job)
                 self._update_row(job)
         self._refresh_controls()
         self._start_next()
@@ -437,6 +444,17 @@ class CompressVideoDialog(QDialog):
         if job.target:
             self.table.item(row, 0).setToolTip(f'{job.source}\n-> {job.target}')
         job.row_widgets['bar'].setValue(job.progress)
+        self._emit_progress()
+
+    def _emit_progress(self):
+        jobs = [j for j in self._batch if j.state != JobState.CANCELLED]
+        finished_states = (JobState.DONE, JobState.FAILED)
+        finished = sum(1 for j in jobs if j.state in finished_states)
+        overall = sum(100 if j.state in finished_states else j.progress for j in jobs) // len(jobs) if jobs else 0
+        active = any(j.state in (JobState.QUEUED, JobState.RUNNING) for j in jobs)
+        current = self.current_job
+        self.progress_changed.emit(active, os.path.basename(current.source) if current else '',
+                                   current.progress if current else 0, finished, len(jobs), overall)
 
     def _start_next(self):
         if self.process is not None:
@@ -469,6 +487,7 @@ class CompressVideoDialog(QDialog):
             if key == 'out_time_us' and job.duration and value.lstrip('-').isdigit():
                 job.progress = max(0, min(99, int(int(value) / 1_000_000 / job.duration * 100)))
                 job.row_widgets['bar'].setValue(job.progress)
+                self._emit_progress()
             elif key == 'progress' and value == 'end' and job.duration is None:
                 job.progress = 99
 
