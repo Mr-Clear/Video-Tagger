@@ -3,8 +3,9 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QProcess, Qt, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QGroupBox,
-                               QHBoxLayout, QHeaderView, QPushButton,
+                               QHBoxLayout, QHeaderView, QMenu, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QProgressBar, QLabel)
 
@@ -57,6 +58,8 @@ class CompressionJob:
     target: str
     duration: float | None
     options: CompressionOptions
+    source_size: int | None = None
+    compressed_size: int | None = None
     state: JobState = JobState.PENDING
     progress: int = 0
     error: str = ''
@@ -94,6 +97,12 @@ class CompressVideoDialog(QDialog):
     """Non-modal dialog with a persistent queue; jobs run one at a time in the background."""
 
     file_compressed = Signal(str)
+    file_selected = Signal(object)
+    file_activated = Signal(str)
+    compressed_output_activated = Signal(str)
+    compressed_output_selected = Signal(str)
+    compressed_output_delete_requested = Signal(str)
+    compressed_output_replace_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -170,29 +179,36 @@ class CompressVideoDialog(QDialog):
         row.addWidget(self.compress_button)
         layout.addLayout(row)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(['File', 'Settings', 'Status', 'Progress'])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ['File', 'File size', 'Compressed size', 'Settings', 'Status', 'Progress'])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.verticalHeader().hide()
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        self.table.setColumnWidth(3, 180)
+        for column in range(1, 5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(5, 180)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.cellDoubleClicked.connect(self._on_file_activated)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.table)
 
         buttons = QHBoxLayout()
         self.cancel_button = QPushButton('Cancel Selected')
         self.cancel_button.clicked.connect(self._cancel_selected)
+        self.cancel_current_button = QPushButton('Cancel Current')
+        self.cancel_current_button.clicked.connect(self._cancel_current)
         self.clear_button = QPushButton('Clear Finished')
         self.clear_button.clicked.connect(self._clear_finished)
         close_button = QPushButton('Close')
         close_button.clicked.connect(self.hide)
         buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.cancel_current_button)
         buttons.addWidget(self.clear_button)
         buttons.addStretch()
         buttons.addWidget(close_button)
@@ -233,11 +249,15 @@ class CompressVideoDialog(QDialog):
         pending = sum(1 for j in self.jobs if j.state == JobState.PENDING)
         self.compress_button.setEnabled(pending > 0)
         self.selection_label.setText(f'{pending} pending file(s). Option changes apply to the selected pending files.')
+        self.cancel_current_button.setEnabled(
+            self.current_job is not None and self.current_job.state == JobState.RUNNING)
         editable = bool(self._editable_selected_jobs())
         for widget in (self.format_combo, self.resolution_combo, self.crf_spin, self.preset_combo, self.audio_spin):
             widget.setEnabled(editable or not self.jobs)
 
     def _on_selection_changed(self):
+        selected = self._selected_jobs()
+        self.file_selected.emit(selected[0].source if selected else None)
         jobs = self._editable_selected_jobs()
         if jobs:
             options = jobs[0].options
@@ -250,6 +270,47 @@ class CompressVideoDialog(QDialog):
             self._loading_options = False
         self._refresh_controls()
         self._show_file_info()
+
+    def _on_file_activated(self, row: int, _column: int):
+        if 0 <= row < len(self.jobs):
+            self.file_activated.emit(self.jobs[row].source)
+
+    def _show_context_menu(self, position):
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        if not self.table.selectionModel().isRowSelected(index.row(), index.parent()):
+            self.table.selectRow(index.row())
+        job = self.jobs[index.row()]
+        menu = QMenu(self.table)
+        play_original_action = QAction('Play Original', menu)
+        play_original_action.setEnabled(os.path.isfile(job.source))
+        play_original_action.triggered.connect(lambda: self.file_activated.emit(job.source))
+        menu.addAction(play_original_action)
+
+        menu.addSeparator()
+
+        play_action = QAction('Play Compressed Output', menu)
+        output_exists = job.state == JobState.DONE and os.path.isfile(job.target)
+        play_action.setEnabled(output_exists)
+        play_action.triggered.connect(lambda: self.compressed_output_activated.emit(job.target))
+        menu.addAction(play_action)
+
+        select_action = QAction('Select Compressed', menu)
+        select_action.setEnabled(output_exists)
+        select_action.triggered.connect(lambda: self.compressed_output_selected.emit(job.target))
+        menu.addAction(select_action)
+
+        delete_action = QAction('Delete Compressed', menu)
+        delete_action.setEnabled(output_exists)
+        delete_action.triggered.connect(lambda: self.compressed_output_delete_requested.emit(job.target))
+        menu.addAction(delete_action)
+
+        replace_action = QAction('Replace Original', menu)
+        replace_action.setEnabled(output_exists)
+        replace_action.triggered.connect(lambda: self.compressed_output_replace_requested.emit(job.target))
+        menu.addAction(replace_action)
+        menu.exec(self.table.viewport().mapToGlobal(position))
 
     def _show_file_info(self):
         self._info_paths = list(dict.fromkeys(j.source for j in self._selected_jobs()))
@@ -343,11 +404,17 @@ class CompressVideoDialog(QDialog):
         name_item = QTableWidgetItem(os.path.basename(job.source))
         name_item.setToolTip(job.source)
         self.table.setItem(row, 0, name_item)
+        try:
+            job.source_size = os.path.getsize(job.source)
+        except OSError:
+            job.source_size = None
         self.table.setItem(row, 1, QTableWidgetItem())
         self.table.setItem(row, 2, QTableWidgetItem())
+        self.table.setItem(row, 3, QTableWidgetItem())
+        self.table.setItem(row, 4, QTableWidgetItem())
         bar = QProgressBar()
         bar.setRange(0, 100)
-        self.table.setCellWidget(row, 3, bar)
+        self.table.setCellWidget(row, 5, bar)
         job.row_widgets = {'name': name_item, 'bar': bar}
         self._update_row(job)
 
@@ -358,8 +425,12 @@ class CompressVideoDialog(QDialog):
         row = self._row_of(job)
         o = job.options
         resolution = next(k for k, v in RESOLUTIONS.items() if v == o.height)
-        self.table.item(row, 1).setText(f'{o.format_name}, {resolution}, CRF {o.crf}, {o.preset}, {o.audio_bitrate_kbps}k')
-        item = self.table.item(row, 2)
+        self.table.item(row, 1).setText(format_size(job.source_size) if job.source_size is not None else '-')
+        self.table.item(row, 2).setText(
+            format_size(job.compressed_size) if job.compressed_size is not None else '-')
+        self.table.item(row, 3).setText(
+            f'{o.format_name}, {resolution}, CRF {o.crf}, {o.preset}, {o.audio_bitrate_kbps}k')
+        item = self.table.item(row, 4)
         item.setText(job.state.value)
         item.setToolTip(job.error)
         if job.target:
@@ -435,6 +506,10 @@ class CompressVideoDialog(QDialog):
         job.state = state
         if state == JobState.DONE:
             job.progress = 100
+            try:
+                job.compressed_size = os.path.getsize(job.target)
+            except OSError:
+                job.compressed_size = None
         elif state in (JobState.FAILED, JobState.CANCELLED):
             job.error = self._stderr_tail.strip()
             if os.path.exists(job.target):
@@ -456,8 +531,14 @@ class CompressVideoDialog(QDialog):
                 self._update_row(job)
                 self._refresh_controls()
             elif job.state == JobState.RUNNING and self.process is not None:
-                job.state = JobState.CANCELLED
-                self.process.terminate()
+                self._cancel_current()
+
+    def _cancel_current(self):
+        if self.current_job is None or self.process is None:
+            return
+        self.current_job.state = JobState.CANCELLED
+        self._refresh_controls()
+        self.process.kill()
 
     def _clear_finished(self):
         for row in reversed(range(len(self.jobs))):

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import jsonpickle
-from PySide6.QtCore import (QByteArray, QFile, QModelIndex, QRegularExpression,
+from PySide6.QtCore import (QByteArray, QFile, QItemSelectionModel, QModelIndex, QRegularExpression,
                             QSortFilterProxyModel, Qt, QTimer, Signal)
 from PySide6.QtGui import QAction, QKeyEvent, QWindow
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout,
@@ -68,6 +68,12 @@ class MainWindow(QMainWindow):
     def _init_ui(self):
         self.compress_dialog = CompressVideoDialog(self)
         self.compress_dialog.file_compressed.connect(self.on_file_compressed)
+        self.compress_dialog.file_selected.connect(self.select_file_by_path)
+        self.compress_dialog.file_activated.connect(self.play_file_by_path)
+        self.compress_dialog.compressed_output_activated.connect(self.play_file_by_path)
+        self.compress_dialog.compressed_output_selected.connect(self.select_file_by_path)
+        self.compress_dialog.compressed_output_delete_requested.connect(self.delete_compressed_output)
+        self.compress_dialog.compressed_output_replace_requested.connect(self.replace_compressed_output)
 
         self.central_widget = QWidget()
         self.main_layout = QHBoxLayout()
@@ -579,6 +585,26 @@ class MainWindow(QMainWindow):
         else:
             self.vlc.stop_video()
 
+    def select_file_by_path(self, file_path: str | None):
+        if file_path is None:
+            return
+        file = next((item for item in self.file_list_model.files if item.path == file_path), None)
+        if file is None:
+            return
+        self.set_selected_file(file)
+        self.file_list_filter_model.invalidateFilter()
+        source_row = self.file_list_model.files.index(file)
+        proxy_index = self.file_list_filter_model.mapFromSource(self.file_list_model.index(source_row, 0))
+        if proxy_index.isValid():
+            self.file_list.selectionModel().setCurrentIndex(
+                proxy_index,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+            self.file_list.scrollTo(proxy_index)
+
+    def play_file_by_path(self, file_path: str):
+        self.select_file_by_path(file_path)
+        self.play_selected_file()
+
     def update_vlc_status(self):
         self.vlc.update_status()
 
@@ -743,6 +769,21 @@ class MainWindow(QMainWindow):
             self.file_list_model.remove_file(file)
         if failed:
             QMessageBox.warning(self, 'Delete', 'Could not delete:\n' + '\n'.join(failed))
+
+    def delete_compressed_output(self, file_path: str):
+        file = self.database.find_file(file_path)
+        if file is not None:
+            self.delete_files([file])
+
+    def replace_compressed_output(self, file_path: str):
+        compressed = self.database.find_file(file_path)
+        if compressed is None:
+            return
+        original = self._find_original(compressed)
+        if original is None:
+            QMessageBox.warning(self, 'Replace Original', 'The original video could not be found.')
+            return
+        self.replace_original(compressed, original)
 
     def _find_original(self, file: VideoFile) -> VideoFile | None:
         match = re.fullmatch(r'(.*)_compressed(?:_\d+)?', file.name_prefix)
