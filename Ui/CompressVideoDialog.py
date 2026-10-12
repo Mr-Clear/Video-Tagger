@@ -96,7 +96,7 @@ def unique_target_path(source: str, ext: str) -> str:
 class CompressVideoDialog(QDialog):
     """Non-modal dialog with a persistent queue; jobs run one at a time in the background."""
 
-    file_compressed = Signal(str)
+    file_compressed = Signal(str, str)
     file_selected = Signal(object)
     file_activated = Signal(str)
     compressed_output_activated = Signal(str)
@@ -520,7 +520,7 @@ class CompressVideoDialog(QDialog):
                     pass
         self._update_row(job)
         if state == JobState.DONE:
-            self.file_compressed.emit(job.target)
+            self.file_compressed.emit(job.source, job.target)
         self._start_next()
 
     def _cancel_selected(self):

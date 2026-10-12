@@ -120,6 +120,16 @@ class TagListModel(QAbstractTableModel):
     def set_current_file(self, file: VideoFile | None):
         self.current_file = file
 
+    def count_tag(self, tag_name: str, delta: int):
+        if tag_name not in self.tags:
+            self.beginInsertRows(QModelIndex(), self.rowCount(), self.rowCount())
+            self.tags[tag_name] = 0
+            self.tag_names.append(tag_name)
+            self.endInsertRows()
+        self.tags[tag_name] += delta
+        self._max_count = max(self._max_count, self.tags[tag_name])
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
     def set_tag(self, tag_name: str):
         if tag_name not in self.tags:
             self.beginInsertRows(QModelIndex(), self.rowCount(), self.rowCount())

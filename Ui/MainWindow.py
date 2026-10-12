@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
         self.compress_dialog.raise_()
         self.compress_dialog.activateWindow()
 
-    def on_file_compressed(self, file_path: str):
+    def on_file_compressed(self, source_path: str, file_path: str):
         try:
             size = os.path.getsize(file_path)
             date_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
@@ -295,7 +295,18 @@ class MainWindow(QMainWindow):
         file_id = self.database.add_file(VideoFile(-1, file_path, size, date_modified))
         if file_id < 0:
             return
-        self.file_list_model.add_file(self.database.get_file(file_id))
+        compressed = self.database.get_file(file_id)
+        original = next((f for f in self.file_list_model.files if f.path == source_path), None)
+        tags = {'Compressed'}
+        if original is not None:
+            tags |= original.tags
+            self.database.set_rating(compressed.id, original.rating)
+            compressed.rating = original.rating
+        for tag in sorted(tags):
+            self.database.set_tag(compressed.id, tag)
+            compressed.tags.add(tag)
+            self.tag_list_model.count_tag(tag, 1)
+        self.file_list_model.add_file(compressed)
         # Widen the size/date filter so the new file isn't hidden by the ranges computed at load time.
         self.filter_widget.min_size = min(self.filter_widget.min_size, size)
         self.filter_widget.max_size = max(self.filter_widget.max_size, size)
@@ -795,6 +806,19 @@ class MainWindow(QMainWindow):
                      if f is not file and os.path.dirname(f.path) == directory
                      and f.name_prefix == match.group(1) and os.path.exists(f.path)), None)
 
+    def _merge_tags_and_rating(self, compressed: VideoFile, original: VideoFile):
+        for tag in compressed.tags:
+            if tag in original.tags:
+                self.tag_list_model.count_tag(tag, -1)  # The compressed file's record is going away.
+            else:
+                self.database.set_tag(original.id, tag)
+                original.tags.add(tag)
+        ratings = [r for r in (original.rating, compressed.rating) if r is not None]
+        rating = max(ratings, default=None)
+        if rating != original.rating:
+            self.database.set_rating(original.id, rating)
+            original.rating = rating
+
     def replace_originals(self, pairs: list[tuple[VideoFile, VideoFile]]):
         problems = []
         todo = []
@@ -837,6 +861,7 @@ class MainWindow(QMainWindow):
             date_modified = datetime.fromtimestamp(os.path.getmtime(new_path))
             self.database.remove_file(compressed.id)
             self.database.update_file_location(original.id, new_path, size, date_modified, compressed.duration)
+            self._merge_tags_and_rating(compressed, original)
             self.file_list_model.remove_file(compressed)
             original.path, original.size, original.date_modified = new_path, size, date_modified
             original.duration = compressed.duration
